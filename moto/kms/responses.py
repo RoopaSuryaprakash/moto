@@ -178,6 +178,14 @@ class KmsResponse(BaseResponse):
             }
         )
 
+    def list_grants(self):
+        # TODO: Make this real...
+        return json.dumps({
+            "Grants": [],
+            "NextMarker": None,
+            "Truncated": False,
+        })
+
     def create_alias(self):
         """https://docs.aws.amazon.com/kms/latest/APIReference/API_CreateAlias.html"""
         return self._set_alias()
