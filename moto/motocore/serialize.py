@@ -169,185 +169,185 @@ class Serializer(object):
         return host_prefix_expression.format(**format_kwargs)
 
 
-class QuerySerializer(Serializer):
+# class QuerySerializer(Serializer):
+#
+#     TIMESTAMP_FORMAT = 'iso8601'
+#
+#     def serialize_to_request(self, parameters, operation_model):
+#         shape = operation_model.input_shape
+#         serialized = self._create_default_request()
+#         serialized['method'] = operation_model.http.get('method',
+#                                                         self.DEFAULT_METHOD)
+#         serialized['headers'] = {
+#             'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
+#         }
+#         # The query serializer only deals with body params so
+#         # that's what we hand off the _serialize_* methods.
+#         body_params = self.MAP_TYPE()
+#         body_params['Action'] = operation_model.name
+#         body_params['Version'] = operation_model.metadata['apiVersion']
+#         if shape is not None:
+#             self._serialize(body_params, parameters, shape)
+#         serialized['body'] = body_params
+#
+#         host_prefix = self._expand_host_prefix(parameters, operation_model)
+#         if host_prefix is not None:
+#             serialized['host_prefix'] = host_prefix
+#
+#         return serialized
+#
+#     def _serialize(self, serialized, value, shape, prefix=''):
+#         # serialized: The dict that is incrementally added to with the
+#         #             final serialized parameters.
+#         # value: The current user input value.
+#         # shape: The shape object that describes the structure of the
+#         #        input.
+#         # prefix: The incrementally built up prefix for the serialized
+#         #         key (i.e Foo.bar.members.1).
+#         method = getattr(self, '_serialize_type_%s' % shape.type_name,
+#                          self._default_serialize)
+#         method(serialized, value, shape, prefix=prefix)
+#
+#     def _serialize_type_structure(self, serialized, value, shape, prefix=''):
+#         members = shape.members
+#         for key, value in value.items():
+#             member_shape = members[key]
+#             member_prefix = self._get_serialized_name(member_shape, key)
+#             if prefix:
+#                 member_prefix = '%s.%s' % (prefix, member_prefix)
+#             self._serialize(serialized, value, member_shape, member_prefix)
+#
+#     def _serialize_type_list(self, serialized, value, shape, prefix=''):
+#         if not value:
+#             # The query protocol serializes empty lists.
+#             serialized[prefix] = ''
+#             return
+#         if self._is_shape_flattened(shape):
+#             list_prefix = prefix
+#             if shape.member.serialization.get('name'):
+#                 name = self._get_serialized_name(shape.member, default_name='')
+#                 # Replace '.Original' with '.{name}'.
+#                 list_prefix = '.'.join(prefix.split('.')[:-1] + [name])
+#         else:
+#             list_name = shape.member.serialization.get('name', 'member')
+#             list_prefix = '%s.%s' % (prefix, list_name)
+#         for i, element in enumerate(value, 1):
+#             element_prefix = '%s.%s' % (list_prefix, i)
+#             element_shape = shape.member
+#             self._serialize(serialized, element, element_shape, element_prefix)
+#
+#     def _serialize_type_map(self, serialized, value, shape, prefix=''):
+#         if self._is_shape_flattened(shape):
+#             full_prefix = prefix
+#         else:
+#             full_prefix = '%s.entry' % prefix
+#         template = full_prefix + '.{i}.{suffix}'
+#         key_shape = shape.key
+#         value_shape = shape.value
+#         key_suffix = self._get_serialized_name(key_shape, default_name='key')
+#         value_suffix = self._get_serialized_name(value_shape, 'value')
+#         for i, key in enumerate(value, 1):
+#             key_prefix = template.format(i=i, suffix=key_suffix)
+#             value_prefix = template.format(i=i, suffix=value_suffix)
+#             self._serialize(serialized, key, key_shape, key_prefix)
+#             self._serialize(serialized, value[key], value_shape, value_prefix)
+#
+#     def _serialize_type_blob(self, serialized, value, shape, prefix=''):
+#         # Blob args must be base64 encoded.
+#         serialized[prefix] = self._get_base64(value)
+#
+#     def _serialize_type_timestamp(self, serialized, value, shape, prefix=''):
+#         serialized[prefix] = self._convert_timestamp_to_str(
+#             value, shape.serialization.get('timestampFormat'))
+#
+#     def _serialize_type_boolean(self, serialized, value, shape, prefix=''):
+#         if value:
+#             serialized[prefix] = 'true'
+#         else:
+#             serialized[prefix] = 'false'
+#
+#     def _default_serialize(self, serialized, value, shape, prefix=''):
+#         serialized[prefix] = value
+#
+#     def _is_shape_flattened(self, shape):
+#         return shape.serialization.get('flattened')
 
-    TIMESTAMP_FORMAT = 'iso8601'
 
-    def serialize_to_request(self, parameters, operation_model):
-        shape = operation_model.input_shape
-        serialized = self._create_default_request()
-        serialized['method'] = operation_model.http.get('method',
-                                                        self.DEFAULT_METHOD)
-        serialized['headers'] = {
-            'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8'
-        }
-        # The query serializer only deals with body params so
-        # that's what we hand off the _serialize_* methods.
-        body_params = self.MAP_TYPE()
-        body_params['Action'] = operation_model.name
-        body_params['Version'] = operation_model.metadata['apiVersion']
-        if shape is not None:
-            self._serialize(body_params, parameters, shape)
-        serialized['body'] = body_params
-
-        host_prefix = self._expand_host_prefix(parameters, operation_model)
-        if host_prefix is not None:
-            serialized['host_prefix'] = host_prefix
-
-        return serialized
-
-    def _serialize(self, serialized, value, shape, prefix=''):
-        # serialized: The dict that is incrementally added to with the
-        #             final serialized parameters.
-        # value: The current user input value.
-        # shape: The shape object that describes the structure of the
-        #        input.
-        # prefix: The incrementally built up prefix for the serialized
-        #         key (i.e Foo.bar.members.1).
-        method = getattr(self, '_serialize_type_%s' % shape.type_name,
-                         self._default_serialize)
-        method(serialized, value, shape, prefix=prefix)
-
-    def _serialize_type_structure(self, serialized, value, shape, prefix=''):
-        members = shape.members
-        for key, value in value.items():
-            member_shape = members[key]
-            member_prefix = self._get_serialized_name(member_shape, key)
-            if prefix:
-                member_prefix = '%s.%s' % (prefix, member_prefix)
-            self._serialize(serialized, value, member_shape, member_prefix)
-
-    def _serialize_type_list(self, serialized, value, shape, prefix=''):
-        if not value:
-            # The query protocol serializes empty lists.
-            serialized[prefix] = ''
-            return
-        if self._is_shape_flattened(shape):
-            list_prefix = prefix
-            if shape.member.serialization.get('name'):
-                name = self._get_serialized_name(shape.member, default_name='')
-                # Replace '.Original' with '.{name}'.
-                list_prefix = '.'.join(prefix.split('.')[:-1] + [name])
-        else:
-            list_name = shape.member.serialization.get('name', 'member')
-            list_prefix = '%s.%s' % (prefix, list_name)
-        for i, element in enumerate(value, 1):
-            element_prefix = '%s.%s' % (list_prefix, i)
-            element_shape = shape.member
-            self._serialize(serialized, element, element_shape, element_prefix)
-
-    def _serialize_type_map(self, serialized, value, shape, prefix=''):
-        if self._is_shape_flattened(shape):
-            full_prefix = prefix
-        else:
-            full_prefix = '%s.entry' % prefix
-        template = full_prefix + '.{i}.{suffix}'
-        key_shape = shape.key
-        value_shape = shape.value
-        key_suffix = self._get_serialized_name(key_shape, default_name='key')
-        value_suffix = self._get_serialized_name(value_shape, 'value')
-        for i, key in enumerate(value, 1):
-            key_prefix = template.format(i=i, suffix=key_suffix)
-            value_prefix = template.format(i=i, suffix=value_suffix)
-            self._serialize(serialized, key, key_shape, key_prefix)
-            self._serialize(serialized, value[key], value_shape, value_prefix)
-
-    def _serialize_type_blob(self, serialized, value, shape, prefix=''):
-        # Blob args must be base64 encoded.
-        serialized[prefix] = self._get_base64(value)
-
-    def _serialize_type_timestamp(self, serialized, value, shape, prefix=''):
-        serialized[prefix] = self._convert_timestamp_to_str(
-            value, shape.serialization.get('timestampFormat'))
-
-    def _serialize_type_boolean(self, serialized, value, shape, prefix=''):
-        if value:
-            serialized[prefix] = 'true'
-        else:
-            serialized[prefix] = 'false'
-
-    def _default_serialize(self, serialized, value, shape, prefix=''):
-        serialized[prefix] = value
-
-    def _is_shape_flattened(self, shape):
-        return shape.serialization.get('flattened')
-
-
-class JSONSerializer(Serializer):
-    TIMESTAMP_FORMAT = 'unixtimestamp'
-
-    def serialize_to_request(self, parameters, operation_model):
-        target = '%s.%s' % (operation_model.metadata['targetPrefix'],
-                            operation_model.name)
-        json_version = operation_model.metadata['jsonVersion']
-        serialized = self._create_default_request()
-        serialized['method'] = operation_model.http.get('method',
-                                                        self.DEFAULT_METHOD)
-        serialized['headers'] = {
-            'X-Amz-Target': target,
-            'Content-Type': 'application/x-amz-json-%s' % json_version,
-        }
-        body = self.MAP_TYPE()
-        input_shape = operation_model.input_shape
-        if input_shape is not None:
-            self._serialize(body, parameters, input_shape)
-        serialized['body'] = json.dumps(body).encode(self.DEFAULT_ENCODING)
-
-        host_prefix = self._expand_host_prefix(parameters, operation_model)
-        if host_prefix is not None:
-            serialized['host_prefix'] = host_prefix
-
-        return serialized
-
-    def _serialize(self, serialized, value, shape, key=None):
-        method = getattr(self, '_serialize_type_%s' % shape.type_name,
-                         self._default_serialize)
-        method(serialized, value, shape, key)
-
-    def _serialize_type_structure(self, serialized, value, shape, key):
-        if key is not None:
-            # If a key is provided, this is a result of a recursive
-            # call so we need to add a new child dict as the value
-            # of the passed in serialized dict.  We'll then add
-            # all the structure members as key/vals in the new serialized
-            # dictionary we just created.
-            new_serialized = self.MAP_TYPE()
-            serialized[key] = new_serialized
-            serialized = new_serialized
-        members = shape.members
-        for member_key, member_value in value.items():
-            member_shape = members[member_key]
-            if 'name' in member_shape.serialization:
-                member_key = member_shape.serialization['name']
-            self._serialize(serialized, member_value, member_shape, member_key)
-
-    def _serialize_type_map(self, serialized, value, shape, key):
-        map_obj = self.MAP_TYPE()
-        serialized[key] = map_obj
-        for sub_key, sub_value in value.items():
-            self._serialize(map_obj, sub_value, shape.value, sub_key)
-
-    def _serialize_type_list(self, serialized, value, shape, key):
-        list_obj = []
-        serialized[key] = list_obj
-        for list_item in value:
-            wrapper = {}
-            # The JSON list serialization is the only case where we aren't
-            # setting a key on a dict.  We handle this by using
-            # a __current__ key on a wrapper dict to serialize each
-            # list item before appending it to the serialized list.
-            self._serialize(wrapper, list_item, shape.member, "__current__")
-            list_obj.append(wrapper["__current__"])
-
-    def _default_serialize(self, serialized, value, shape, key):
-        serialized[key] = value
-
-    def _serialize_type_timestamp(self, serialized, value, shape, key):
-        serialized[key] = self._convert_timestamp_to_str(
-            value, shape.serialization.get('timestampFormat'))
-
-    def _serialize_type_blob(self, serialized, value, shape, key):
-        serialized[key] = self._get_base64(value)
+# class JSONSerializer(Serializer):
+#     TIMESTAMP_FORMAT = 'unixtimestamp'
+#
+#     def serialize_to_request(self, parameters, operation_model):
+#         target = '%s.%s' % (operation_model.metadata['targetPrefix'],
+#                             operation_model.name)
+#         json_version = operation_model.metadata['jsonVersion']
+#         serialized = self._create_default_request()
+#         serialized['method'] = operation_model.http.get('method',
+#                                                         self.DEFAULT_METHOD)
+#         serialized['headers'] = {
+#             'X-Amz-Target': target,
+#             'Content-Type': 'application/x-amz-json-%s' % json_version,
+#         }
+#         body = self.MAP_TYPE()
+#         input_shape = operation_model.input_shape
+#         if input_shape is not None:
+#             self._serialize(body, parameters, input_shape)
+#         serialized['body'] = json.dumps(body).encode(self.DEFAULT_ENCODING)
+#
+#         host_prefix = self._expand_host_prefix(parameters, operation_model)
+#         if host_prefix is not None:
+#             serialized['host_prefix'] = host_prefix
+#
+#         return serialized
+#
+#     def _serialize(self, serialized, value, shape, key=None):
+#         method = getattr(self, '_serialize_type_%s' % shape.type_name,
+#                          self._default_serialize)
+#         method(serialized, value, shape, key)
+#
+#     def _serialize_type_structure(self, serialized, value, shape, key):
+#         if key is not None:
+#             # If a key is provided, this is a result of a recursive
+#             # call so we need to add a new child dict as the value
+#             # of the passed in serialized dict.  We'll then add
+#             # all the structure members as key/vals in the new serialized
+#             # dictionary we just created.
+#             new_serialized = self.MAP_TYPE()
+#             serialized[key] = new_serialized
+#             serialized = new_serialized
+#         members = shape.members
+#         for member_key, member_value in value.items():
+#             member_shape = members[member_key]
+#             if 'name' in member_shape.serialization:
+#                 member_key = member_shape.serialization['name']
+#             self._serialize(serialized, member_value, member_shape, member_key)
+#
+#     def _serialize_type_map(self, serialized, value, shape, key):
+#         map_obj = self.MAP_TYPE()
+#         serialized[key] = map_obj
+#         for sub_key, sub_value in value.items():
+#             self._serialize(map_obj, sub_value, shape.value, sub_key)
+#
+#     def _serialize_type_list(self, serialized, value, shape, key):
+#         list_obj = []
+#         serialized[key] = list_obj
+#         for list_item in value:
+#             wrapper = {}
+#             # The JSON list serialization is the only case where we aren't
+#             # setting a key on a dict.  We handle this by using
+#             # a __current__ key on a wrapper dict to serialize each
+#             # list item before appending it to the serialized list.
+#             self._serialize(wrapper, list_item, shape.member, "__current__")
+#             list_obj.append(wrapper["__current__"])
+#
+#     def _default_serialize(self, serialized, value, shape, key):
+#         serialized[key] = value
+#
+#     def _serialize_type_timestamp(self, serialized, value, shape, key):
+#         serialized[key] = self._convert_timestamp_to_str(
+#             value, shape.serialization.get('timestampFormat'))
+#
+#     def _serialize_type_blob(self, serialized, value, shape, key):
+#         serialized[key] = self._get_base64(value)
 
 
 class BaseRestSerializer(Serializer):
@@ -532,12 +532,12 @@ class BaseRestSerializer(Serializer):
             return value
 
 
-class RestJSONSerializer(BaseRestSerializer, JSONSerializer):
-
-    def _serialize_body_params(self, params, shape):
-        serialized_body = self.MAP_TYPE()
-        self._serialize(serialized_body, params, shape)
-        return json.dumps(serialized_body).encode(self.DEFAULT_ENCODING)
+# class RestJSONSerializer(BaseRestSerializer, JSONSerializer):
+#
+#     def _serialize_body_params(self, params, shape):
+#         serialized_body = self.MAP_TYPE()
+#         self._serialize(serialized_body, params, shape)
+#         return json.dumps(serialized_body).encode(self.DEFAULT_ENCODING)
 
 
 class RestXMLSerializer(BaseRestSerializer):
@@ -771,25 +771,30 @@ class XmlSerializer(DictSerializer):
                 if 'resultWrapper' in output_shape.serialization:
                     start[output_shape.serialization['resultWrapper']] = {}
                     start = start[output_shape.serialization['resultWrapper']]
-                    # I probably want to move this to some sort of helper that gets called
-                    # a al the emit handlers/hooks in botocore to fix this before it even gets
-                    # to the serializer.
-                    # botocore.hooks:Event creating-client-class.rds: calling handler <function add_generate_presigned_url at 0x102a041e0>
-                    if 'result' in value:
-                        result = value['result']
-                        result_key = None
-                        for member_key, member in output_shape.members.items():
-                            if member.type_name == 'structure' and isinstance(result, object):
-                                result_key = xform_name(member_key)
-                                break
-                            elif member.type_name == 'list' and isinstance(result, list):
-                                result_key = xform_name(member_key)
-                                break
-                            elif member.type_name == 'string' and isinstance(result, str):
-                                result_key = xform_name(member_key)
-                                break
-                        if result_key:
-                            value[result_key] = value.pop('result')
+                # I probably want to move this to some sort of helper that gets called
+                # a al the emit handlers/hooks in botocore to fix this before it even gets
+                # to the serializer.
+                # botocore.hooks:Event creating-client-class.rds: calling handler <function add_generate_presigned_url at 0x102a041e0>
+                if 'result' in value:
+                    result = value['result']
+                    result_key = None
+                    for member_key, member in output_shape.members.items():
+                        if 'name' in member.serialization:
+                            member_key = member.serialization['name']
+                        if member.type_name == 'structure' and isinstance(result, object):
+                            result_key = xform_name(member_key)
+                            break
+                        elif member.type_name == 'list' and isinstance(result, list):
+                            result_key = xform_name(member_key)
+                            break
+                        elif member.type_name == 'string' and isinstance(result, str):
+                            result_key = xform_name(member_key)
+                            break
+                    if result_key:
+                        value[result_key] = value.pop('result')
+                    else:
+                        value = value['result']
+                    # TODO: Figure out what this is doing because I think it's what we need!
                     # key, output_shape = self._find_result_wrapped_shape(
                     # output_shape,
                     #         value)
@@ -822,9 +827,85 @@ class XmlSerializer(DictSerializer):
         serialized[key] = str(value).lower()
 
 
+class QuerySerializer(XmlSerializer):
+    pass
+
+class JSONSerializer(DictSerializer):
+
+    def _serialize_exception(self, value, operation_model):
+        return {}
+
+    def _serialize_type_list(self, serialized, value, shape, key):
+        list_obj = []
+        serialized[key] = list_obj
+        for list_item in value:
+            wrapper = {}
+            # The JSON list serialization is the only case where we aren't
+            # setting a key on a dict.  We handle this by using
+            # a __current__ key on a wrapper dict to serialize each
+            # list item before appending it to the serialized list.
+            self._serialize(wrapper, list_item, shape.member, "__current__")
+            list_obj.append(wrapper["__current__"])
+
+    def serialize_to_response(self, value, operation_model):
+
+        if 'error' in value:
+            serialized = self._serialize_exception(value['error'], operation_model)
+        else:
+
+            serialized = {
+
+            }
+            output_shape = operation_model.output_shape
+            key = None
+            if output_shape is not None:
+                start = serialized
+                if 'resultWrapper' in output_shape.serialization:
+                    start[output_shape.serialization['resultWrapper']] = {}
+                    start = start[output_shape.serialization['resultWrapper']]
+                # I probably want to move this to some sort of helper that gets called
+                # a al the emit handlers/hooks in botocore to fix this before it even gets
+                # to the serializer.
+                # botocore.hooks:Event creating-client-class.rds: calling handler <function add_generate_presigned_url at 0x102a041e0>
+                if 'result' in value:
+                    result = value['result']
+                    result_key = None
+                    for member_key, member in output_shape.members.items():
+                        if 'name' in member.serialization:
+                            member_key = member.serialization['name']
+                        if member.type_name == 'structure' and isinstance(result, object):
+                            result_key = xform_name(member_key)
+                            break
+                        elif member.type_name == 'list' and isinstance(result, list):
+                            result_key = xform_name(member_key)
+                            break
+                        elif member.type_name == 'string' and isinstance(result, str):
+                            result_key = xform_name(member_key)
+                            break
+                    if result_key:
+                        value[result_key] = value.pop('result')
+                    else:
+                        value = value['result']
+                    # TODO: Figure out what this is doing because I think it's what we need!
+                    # key, output_shape = self._find_result_wrapped_shape(
+                    # output_shape,
+                    #         value)
+
+                    # if hasattr(output_shape, 'member'):
+                    #     start[key] = {}
+                    #     start = start[key]
+                    # key = output_shape.member.name
+
+                self._serialize(start, value, output_shape, key)
+        return json.dumps(serialized).encode(self.DEFAULT_ENCODING)
+
+
+class RestJSONSerializer(JSONSerializer):
+    pass
+
+
 SERIALIZERS = {
     'query': QuerySerializer,
     'json': JSONSerializer,
     'rest-json': RestJSONSerializer,
-    'xml': XmlSerializer,
 }

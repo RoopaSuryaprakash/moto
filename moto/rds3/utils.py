@@ -5,7 +5,7 @@ import json
 import boto3
 from pkg_resources import resource_filename
 
-from .parsers import CloudFormationPropertiesParser, QueryStringParametersParser
+from moto.motocore.parsers import CloudFormationPropertiesParser, QueryStringParametersParser
 
 
 metadata = json.load(
