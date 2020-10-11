@@ -124,6 +124,9 @@ def request_dict_to_parsed(request_dict):
         method = getattr(backend, backend_action)
         # TODO: Only pass parameters that match the call signature; pass all if kwargs is present.
         param_spec = inspect.signature(method)
+        # This is super cool because we can use it to only send params
+        # that the method accepts and we can also detect VAR_KEYWORD to
+        # if we can just pass everything.
         print(param_spec)
         result = None
         if method:

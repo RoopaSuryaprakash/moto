@@ -141,6 +141,34 @@ def fix_redshift_result_issues(result_dict, operation_model, **kwargs):
         value = result_dict['result']
         value.key_id = value.id
 
+
+def fix_sqs_request_issues(parsed_request, operation_model, context, **kwargs):
+    if operation_model.name == 'CreateQueue':
+        params = parsed_request['kwargs']
+        params['name'] = params.pop('queue_name')
+
+
+def fix_sqs_result_issues(result_dict, operation_model, **kwargs):
+    if operation_model.name == 'CreateQueue':
+        pass
+
+
+def fix_ssm_request_issues(parsed_request, operation_model, context, **kwargs):
+    if operation_model.name == 'AddTagsToResource':
+        params = parsed_request['kwargs']
+        params['tags'] = {t["key"]: t["value"] for t in params["tags"]}
+    elif operation_model.name == 'RemoveTagsFromResource':
+        params = parsed_request['kwargs']
+        params['keys'] = params.pop('tag_keys')
+
+
+def fix_ssm_result_issues(result_dict, operation_model, **kwargs):
+    if operation_model.name == 'ListTagsForResource':
+        value = result_dict['result']
+        tag_list = [{"key": k, "value": v} for (k, v) in value.items()]
+        result_dict['result'] = {"tag_list": tag_list}
+
+
 # This is a list of (event_name, handler).
 # When our custom client is created, everything in this list will be
 # automatically registered with that Session.
@@ -169,4 +197,12 @@ CUSTOM_HANDLERS = [
     # Redshift
     ("request-after-parsing.redshift.*", fix_redshift_request_issues),
     ("before-result-serialization.redshift.*", fix_redshift_request_issues),
+
+    # SQS
+    ("request-after-parsing.sqs.*", fix_sqs_request_issues),
+    ("before-result-serialization.sqs.*", fix_sqs_result_issues),
+
+    # SSM
+    ("request-after-parsing.ssm.*", fix_ssm_request_issues),
+    ("before-result-serialization.ssm.*", fix_ssm_result_issues),
 ]
