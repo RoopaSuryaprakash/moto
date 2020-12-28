@@ -1,0 +1,14 @@
+{
+  "version": 1.0,
+  "merge": {
+    "pagination": {
+      "DescribeDBClusters": {
+        "limit_default": 100,
+        "page_ending_range_keys": [
+          "start_date",
+          "execution_arn"
+        ]
+      }
+    }
+  }
+}

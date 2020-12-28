@@ -1,4 +1,13 @@
 import importlib
+import os
+
+MOTO_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+# TODO: Do we care if this env var already has something in it?
+# I think it supports multiple paths, separated by `;`, but I
+# wonder if we'd screw anything up if anyone was using it.
+# Maybe not if all we're doing is additive...
+os.environ['AWS_DATA_PATH'] = os.path.join(MOTO_ROOT, 'data')
 
 
 def lazy_load(
