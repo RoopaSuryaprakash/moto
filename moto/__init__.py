@@ -7,7 +7,16 @@ MOTO_ROOT = os.path.dirname(os.path.abspath(__file__))
 # I think it supports multiple paths, separated by `;`, but I
 # wonder if we'd screw anything up if anyone was using it.
 # Maybe not if all we're doing is additive...
+# TODO: This could also be a way for downstream users to specify
+# stuff, like, additional instance types or whatever.  Need to
+# test what the resulting data looks like if there is already
+# a path in this env and then we add one to it...
 os.environ['AWS_DATA_PATH'] = os.path.join(MOTO_ROOT, 'data')
+# TODO:
+# Ok, maybe we don't do this with the env var, but instead do
+# BUILTIN_EXTRAS_TYPES = ['sdk','moto'] in the loader class
+# I guess we can also pass in the moto/data directory directly
+# Yes, we do this ^^
 
 
 def lazy_load(

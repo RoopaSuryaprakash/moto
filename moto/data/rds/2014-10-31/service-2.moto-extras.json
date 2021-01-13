@@ -1,0 +1,15 @@
+{
+  "version": 1.0,
+  "merge": {
+    "shapes": {
+      "DescribeDBClustersMessage": {
+        "members": {
+          "MaxRecords": {
+             "max":100,
+      "min":20
+          }
+        }
+      }
+    }
+  }
+}
