@@ -13,7 +13,6 @@ MAX_RECORDS = 100
 
 
 class RDSResponse(BaseResponse):
-
     @property
     def backend(self):
         return rds3_backends[self.region]
@@ -22,9 +21,24 @@ class RDSResponse(BaseResponse):
         super(RDSResponse, self).__init__()
         self.setup_class(*args)
 
+    @staticmethod
+    def _load_service_model(service_name, api_version=None):
+        from moto.motocore.loaders import Loader
+        from moto.motocore.model import ServiceModel
+
+        loader = Loader()
+        json_model = loader.load_service_model(
+            service_name, "service-2", api_version=api_version
+        )
+        service_model = ServiceModel(json_model, service_name=service_name)
+        return service_model
+
     @classmethod
     def dispatch(cls, *args, **kwargs):
         from moto.motocore.awsrequest import convert_to_request_dict
+
+        model = cls._load_service_model("rds")
+        operational_model = model.operation_model("DescribeDBClusters")
         return convert_to_request_dict(*args)
         # req = request_dict_to_parsed(req)
         # instance = cls(*args)
