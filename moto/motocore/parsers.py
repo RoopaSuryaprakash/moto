@@ -1,8 +1,10 @@
 import six
 from botocore import xform_name
 from botocore.utils import parse_timestamp
+
 DEFAULT_TIMESTAMP_PARSER = parse_timestamp
 import json
+
 
 class RequestParserFactory(object):
     def __init__(self):
@@ -38,9 +40,9 @@ class CloudFormationPropertiesParser(object):
 
     # Not all CF properties map directly to API parameters...
     SHAPE_NAME_TO_CF_PROPERTY_MAP = {
-        'DBParameterGroupFamily': 'Family',
-        'DBSecurityGroupDescription': 'GroupDescription',
-        'VpcSecurityGroupIds': 'VPCSecurityGroups',
+        "DBParameterGroupFamily": "Family",
+        "DBSecurityGroupDescription": "GroupDescription",
+        "VpcSecurityGroupIds": "VPCSecurityGroups",
     }
 
     def __init__(self, convert_to_snake_case=True):
@@ -53,7 +55,7 @@ class CloudFormationPropertiesParser(object):
         return parsed
 
     def _parse_shape(self, shape, prop):
-        handler = getattr(self, '_handle_%s' % shape.type_name, self._default_handle)
+        handler = getattr(self, "_handle_%s" % shape.type_name, self._default_handle)
         return handler(shape, prop)
 
     def _handle_structure(self, shape, prop):
@@ -77,7 +79,7 @@ class CloudFormationPropertiesParser(object):
 
     @staticmethod
     def _handle_boolean(shape, text):
-        if text == 'true':
+        if text == "true":
             return True
         else:
             return False
@@ -90,7 +92,7 @@ class CloudFormationPropertiesParser(object):
     def _default_handle(shape, value):
         # If value is non-scalar, try to get the scalar from the object.
         if value and not isinstance(value, six.string_types):
-            value = getattr(value, 'resource_id', value)
+            value = getattr(value, "resource_id", value)
         return value
 
     def _prop_key_name(self, member_name):
@@ -104,7 +106,6 @@ class CloudFormationPropertiesParser(object):
 
 
 class QueryStringParametersParser(object):
-
     def __init__(self, convert_to_snake_case=True):
         self.convert_to_snake_case = convert_to_snake_case
 
@@ -114,57 +115,62 @@ class QueryStringParametersParser(object):
             parsed = self._parse_shape(shape, query_params)
         return parsed
 
-    def _parse_shape(self, shape, query_params, prefix=''):
-        handler = getattr(self, '_handle_%s' % shape.type_name, self._default_handle)
+    def _parse_shape(self, shape, query_params, prefix=""):
+        handler = getattr(self, "_handle_%s" % shape.type_name, self._default_handle)
         return handler(shape, query_params, prefix=prefix)
 
-    def _handle_structure(self, shape, query_params, prefix=''):
+    def _handle_structure(self, shape, query_params, prefix=""):
         parsed = {}
         members = shape.members
         for member_name in members:
             member_shape = members[member_name]
             member_prefix = self._get_serialized_name(member_shape, member_name)
             if prefix:
-                member_prefix = '%s.%s' % (prefix, member_prefix)
+                member_prefix = "%s.%s" % (prefix, member_prefix)
             if self._has_member(query_params, member_prefix):
                 parsed_key = self._parsed_key_name(member_name)
-                parsed[parsed_key] = self._parse_shape(member_shape, query_params, member_prefix)
+                parsed[parsed_key] = self._parse_shape(
+                    member_shape, query_params, member_prefix
+                )
         return parsed
 
-    def _handle_list(self, shape, query_params, prefix=''):
+    def _handle_list(self, shape, query_params, prefix=""):
         parsed = []
         member_shape = shape.member
 
         list_prefixes = []
-        list_names = list({shape.member.serialization.get('name', 'member'), 'member'})
+        list_names = list({shape.member.serialization.get("name", "member"), "member"})
         for list_name in list_names:
-            list_prefixes.append('%s.%s' % (prefix, list_name))
+            list_prefixes.append("%s.%s" % (prefix, list_name))
 
         for list_prefix in list_prefixes:
             i = 1
-            while self._has_member(query_params, '%s.%s' % (list_prefix, i)):
+            while self._has_member(query_params, "%s.%s" % (list_prefix, i)):
                 parsed.append(
-                    self._parse_shape(member_shape, query_params, '%s.%s' % (list_prefix, i)))
+                    self._parse_shape(
+                        member_shape, query_params, "%s.%s" % (list_prefix, i)
+                    )
+                )
                 i += 1
         return parsed
 
-    def _handle_boolean(self, shape, query_params, prefix=''):
+    def _handle_boolean(self, shape, query_params, prefix=""):
         value = self._default_handle(shape, query_params, prefix)
-        if value.lower() == 'true':
+        if value.lower() == "true":
             return True
         else:
             return False
 
-    def _handle_integer(self, shape, query_params, prefix=''):
+    def _handle_integer(self, shape, query_params, prefix=""):
         value = self._default_handle(shape, query_params, prefix)
         return int(value)
 
-    def _default_handle(self, shape, query_params, prefix=''):
+    def _default_handle(self, shape, query_params, prefix=""):
         # urlparse parses all querystring values into lists.
         return query_params.get(prefix)[0]
 
     def _get_serialized_name(self, shape, default_name):
-        return shape.serialization.get('name', default_name)
+        return shape.serialization.get("name", default_name)
 
     def _parsed_key_name(self, member_name):
         key_name = member_name
@@ -189,7 +195,8 @@ class RequestParser(object):
     docstring for more info.
 
     """
-    DEFAULT_ENCODING = 'utf-8'
+
+    DEFAULT_ENCODING = "utf-8"
     EVENT_STREAM_PARSER_CLS = None
 
     MAP_TYPE = dict
@@ -204,7 +211,8 @@ class RequestParser(object):
         self._event_stream_parser = None
         if self.EVENT_STREAM_PARSER_CLS is not None:
             self._event_stream_parser = self.EVENT_STREAM_PARSER_CLS(
-                timestamp_parser, blob_parser)
+                timestamp_parser, blob_parser
+            )
 
     def _default_blob_parser(self, value):
         # Blobs are always returned as bytes type (this matters on python3).
@@ -244,13 +252,10 @@ class RequestParser(object):
         raise NotImplementedError("%s._do_parse" % self.__class__.__name__)
 
     def _do_error_parse(self, response, shape):
-        raise NotImplementedError(
-            "%s._do_error_parse" % self.__class__.__name__)
-
+        raise NotImplementedError("%s._do_error_parse" % self.__class__.__name__)
 
     def _parse_shape(self, shape, node):
-        handler = getattr(self, '_handle_%s' % shape.type_name,
-                          self._default_handle)
+        handler = getattr(self, "_handle_%s" % shape.type_name, self._default_handle)
         return handler(shape, node)
 
     def _handle_list(self, shape, node):
@@ -267,7 +272,6 @@ class RequestParser(object):
 
 
 class QueryParser(RequestParser):
-
     def parse(self, request_dict, service_model):
         """Parse the HTTP response given a shape.
 
@@ -288,53 +292,52 @@ class QueryParser(RequestParser):
 
         action = self._parse_action(request_dict)
         operation_model = service_model.operation_model(action)
-        parsed = {
-            'action': xform_name(action),
-            'kwargs': {}
-        }
+        parsed = {"action": xform_name(action), "kwargs": {}}
 
         shape = operation_model.input_shape
         if shape is None:
             return parsed
-        parsed['kwargs'] = self._do_parse(request_dict, operation_model.input_shape)
+        parsed["kwargs"] = self._do_parse(request_dict, operation_model.input_shape)
         return parsed
 
     def _parse_action(self, request_dict):
         action = None
-        if request_dict['body']:
-            action = request_dict['body'].get('Action')
+        if request_dict["body"]:
+            action = request_dict["body"].get("Action")
         if action is None:
             # Also try querystring.  It's not supposed to be here, but is for Moto server tests...
-            if request_dict['query_string']:
-                action = request_dict['query_string'].get('Action')
+            if request_dict["query_string"]:
+                action = request_dict["query_string"].get("Action")
         return action
 
     def _do_parse(self, request_dict, shape):
         parsed = {}
-        if request_dict['body']:
-            parsed = self._parse_shape(shape, request_dict['body'])
+        if request_dict["body"]:
+            parsed = self._parse_shape(shape, request_dict["body"])
         else:
-            parsed = self._parse_shape(shape, request_dict['query_string'])
+            parsed = self._parse_shape(shape, request_dict["query_string"])
         return parsed
 
-    def _parse_shape(self, shape, query_params, prefix=''):
-        handler = getattr(self, '_handle_%s' % shape.type_name, self._default_handle)
+    def _parse_shape(self, shape, query_params, prefix=""):
+        handler = getattr(self, "_handle_%s" % shape.type_name, self._default_handle)
         return handler(shape, query_params, prefix=prefix)
 
-    def _handle_structure(self, shape, query_params, prefix=''):
+    def _handle_structure(self, shape, query_params, prefix=""):
         parsed = {}
         members = shape.members
         for member_name in members:
             member_shape = members[member_name]
             member_prefix = self._get_serialized_name(member_shape, member_name)
             if prefix:
-                member_prefix = '%s.%s' % (prefix, member_prefix)
+                member_prefix = "%s.%s" % (prefix, member_prefix)
             if self._has_member(query_params, member_prefix):
                 parsed_key = self._parsed_key_name(member_name)
-                parsed[parsed_key] = self._parse_shape(member_shape, query_params, member_prefix)
+                parsed[parsed_key] = self._parse_shape(
+                    member_shape, query_params, member_prefix
+                )
         return parsed
 
-    def _handle_list(self, shape, query_params, prefix=''):
+    def _handle_list(self, shape, query_params, prefix=""):
         parsed = []
         member_shape = shape.member
 
@@ -343,35 +346,38 @@ class QueryParser(RequestParser):
         # PrefixName.member.x
         # PrefixName.Name.x
         list_prefixes = [prefix]
-        list_names = list({shape.member.serialization.get('name', 'member'), 'member'})
+        list_names = list({shape.member.serialization.get("name", "member"), "member"})
         for list_name in list_names:
-            list_prefixes.append('%s.%s' % (prefix, list_name))
+            list_prefixes.append("%s.%s" % (prefix, list_name))
 
         for list_prefix in list_prefixes:
             i = 1
-            while self._has_member(query_params, '%s.%s' % (list_prefix, i)):
+            while self._has_member(query_params, "%s.%s" % (list_prefix, i)):
                 parsed.append(
-                    self._parse_shape(member_shape, query_params, '%s.%s' % (list_prefix, i)))
+                    self._parse_shape(
+                        member_shape, query_params, "%s.%s" % (list_prefix, i)
+                    )
+                )
                 i += 1
         return parsed
 
-    def _handle_boolean(self, shape, query_params, prefix=''):
+    def _handle_boolean(self, shape, query_params, prefix=""):
         value = self._default_handle(shape, query_params, prefix)
-        if value.lower() == 'true':
+        if value.lower() == "true":
             return True
         else:
             return False
 
-    def _handle_integer(self, shape, query_params, prefix=''):
+    def _handle_integer(self, shape, query_params, prefix=""):
         value = self._default_handle(shape, query_params, prefix)
         return int(value)
 
-    def _default_handle(self, shape, query_params, prefix=''):
+    def _default_handle(self, shape, query_params, prefix=""):
         # urlparse parses all querystring values into lists.
         return query_params.get(prefix)
 
     def _get_serialized_name(self, shape, default_name):
-        return shape.serialization.get('name', default_name)
+        return shape.serialization.get("name", default_name)
 
     def _parsed_key_name(self, member_name):
         key_name = member_name
@@ -383,10 +389,9 @@ class QueryParser(RequestParser):
 
 
 class JSONParser(RequestParser):
-
     def _parse_action(self, request_dict):
-        headers = request_dict['headers']
-        action = headers.get('X-Amz-Target', '.').split('.')[-1]
+        headers = request_dict["headers"]
+        action = headers.get("X-Amz-Target", ".").split(".")[-1]
         return action
 
     def parse(self, request_dict, service_model):
@@ -409,24 +414,22 @@ class JSONParser(RequestParser):
 
         action = self._parse_action(request_dict)
         operation_model = service_model.operation_model(action)
-        parsed = {
-            'action': xform_name(action),
-            'kwargs': {}
-        }
+        parsed = {"action": xform_name(action), "kwargs": {}}
 
         shape = operation_model.input_shape
         if shape is None:
             return parsed
-        parsed['kwargs'] = self._do_parse(request_dict, operation_model.input_shape)
+        parsed["kwargs"] = self._do_parse(request_dict, operation_model.input_shape)
         return parsed
 
     def _do_parse(self, request_dict, shape):
         parsed = {}
-        data = json.loads(request_dict['body'])
+        data = json.loads(request_dict["body"])
         parsed = self._parse_shape(shape, data)
         return parsed
+
     def _parse_shape(self, shape, query_params, key=None):
-        handler = getattr(self, '_handle_%s' % shape.type_name, self._default_handle)
+        handler = getattr(self, "_handle_%s" % shape.type_name, self._default_handle)
         return handler(shape, query_params, key)
 
     def _handle_structure(self, shape, query_params, key):
@@ -446,11 +449,13 @@ class JSONParser(RequestParser):
         for member_name in members:
             member_shape = members[member_name]
             location_name = member_name
-            if 'name' in member_shape.serialization:
-                location_name = member_shape.serialization['name']
+            if "name" in member_shape.serialization:
+                location_name = member_shape.serialization["name"]
             if self._has_member(query_params, location_name):
                 parsed_key = self._parsed_key_name(member_name)
-                parsed[parsed_key] = self._parse_shape(member_shape, query_params, location_name)
+                parsed[parsed_key] = self._parse_shape(
+                    member_shape, query_params, location_name
+                )
         return parsed
 
     def _handle_list(self, shape, query_params, key=None):
@@ -476,15 +481,15 @@ class JSONParser(RequestParser):
 
         return parsed
 
-    def _handle_boolean(self, shape, query_params, prefix=''):
+    def _handle_boolean(self, shape, query_params, prefix=""):
         value = self._default_handle(shape, query_params, prefix)
         return True if value else False
 
-    def _handle_integer(self, shape, query_params, prefix=''):
+    def _handle_integer(self, shape, query_params, prefix=""):
         value = self._default_handle(shape, query_params, prefix)
         return int(value)
 
-    def _default_handle(self, shape, query_params, prefix=''):
+    def _default_handle(self, shape, query_params, prefix=""):
         # urlparse parses all querystring values into lists.
         if prefix:
             value = query_params.get(prefix)
@@ -493,7 +498,7 @@ class JSONParser(RequestParser):
         return value
 
     def _get_serialized_name(self, shape, default_name):
-        return shape.serialization.get('name', default_name)
+        return shape.serialization.get("name", default_name)
 
     def _parsed_key_name(self, member_name):
         key_name = member_name
@@ -503,37 +508,37 @@ class JSONParser(RequestParser):
     def _has_member(self, value, member_prefix):
         return any(i for i in value if i.startswith(member_prefix))
 
-class RestJSONParser(JSONParser):
 
+class RestJSONParser(JSONParser):
     def _parse_rest_action(self, request_dict, service_model):
         # TODO: Find that ._expand_uri_template code in botocore and make this look like that
-        path = request_dict['url_path']
+        path = request_dict["url_path"]
         for operation in service_model.operation_names:
-                op = service_model.operation_model(operation)
-                http = op.http
-                if http['method'] != request_dict['method']:
+            op = service_model.operation_model(operation)
+            http = op.http
+            if http["method"] != request_dict["method"]:
+                continue
+            path_parts = path.split("/")
+            oppath_parts = http["requestUri"].split("/")
+            if len(path_parts) != len(oppath_parts):
+                continue
+            for i in range(len(path_parts)):
+                if oppath_parts[i].startswith("{") and oppath_parts[i].endswith("}"):
                     continue
-                path_parts = path.split('/')
-                oppath_parts = http['requestUri'].split('/')
-                if len(path_parts) != len(oppath_parts):
-                    continue
-                for i in range(len(path_parts)):
-                    if oppath_parts[i].startswith('{') and oppath_parts[i].endswith('}'):
-                        continue
-                    if path_parts[i] != oppath_parts[i]:
-                        break
-                else:
-                    return operation
+                if path_parts[i] != oppath_parts[i]:
+                    break
+            else:
+                return operation
         return None
 
     def _parse_uri_params(self, path, uri_template):
-        path_parts = path.split('/')
-        oppath_parts = uri_template.split('/')
+        path_parts = path.split("/")
+        oppath_parts = uri_template.split("/")
         if len(path_parts) != len(oppath_parts):
             return {}
         params = {}
         for i in range(len(path_parts)):
-            if oppath_parts[i].startswith('{') and oppath_parts[i].endswith('}'):
+            if oppath_parts[i].startswith("{") and oppath_parts[i].endswith("}"):
                 key = oppath_parts[i][1:-1]
                 params[key] = path_parts[i]
         return params
@@ -558,19 +563,20 @@ class RestJSONParser(JSONParser):
 
         action = self._parse_rest_action(request_dict, service_model)
         operation_model = service_model.operation_model(action)
-        parsed = {
-            'action': xform_name(action),
-            'kwargs': {}
-        }
+        parsed = {"action": xform_name(action), "kwargs": {}}
         data = {}
-        data.update(**self._parse_uri_params(request_dict['url_path'], operation_model.http['requestUri']))
-        data.update(**request_dict['query_string'])
-        if request_dict['body']:
-            data.update(**json.loads(request_dict['body']))
+        data.update(
+            **self._parse_uri_params(
+                request_dict["url_path"], operation_model.http["requestUri"]
+            )
+        )
+        data.update(**request_dict["query_string"])
+        if request_dict["body"]:
+            data.update(**json.loads(request_dict["body"]))
         shape = operation_model.input_shape
         if shape is None:
             return parsed
-        parsed['kwargs'] = self._do_parse(data, operation_model.input_shape)
+        parsed["kwargs"] = self._do_parse(data, operation_model.input_shape)
         return parsed
 
     def _do_parse(self, request_dict, shape):
@@ -578,10 +584,11 @@ class RestJSONParser(JSONParser):
         parsed = self._parse_shape(shape, request_dict)
         return parsed
 
+
 PROTOCOL_PARSERS = {
     #'ec2': EC2QueryParser,
-    'query': QueryParser,
-  'json': JSONParser,
-    'rest-json': RestJSONParser,
-  #  'rest-xml': RestXMLParser,
+    "query": QueryParser,
+    "json": JSONParser,
+    "rest-json": RestJSONParser,
+    #  'rest-xml': RestXMLParser,
 }

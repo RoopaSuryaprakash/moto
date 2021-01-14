@@ -9,7 +9,7 @@ class MyClass(object):
         super(MyClass, self).__init__(*args, **kwargs)
         self._register_custom_handlers()
         # Just to get PyCharm to shut up
-        self.meta = getattr(self, 'meta')
+        self.meta = getattr(self, "meta")
 
     def _register_custom_handlers(self):
         for spec in CUSTOM_HANDLERS:
@@ -25,39 +25,43 @@ class MyClass(object):
 
     def test_request_dict(self, parsed_request, operation_model):
         service_id = self.meta.service_model.service_id.hyphenize()
-        context = {
-            'service': service_id,
-            'region': self.meta.region_name
-        }
+        context = {"service": service_id, "region": self.meta.region_name}
         self.meta.events.emit(
-            'request-after-parsing.{service_id}.{operation_name}'.format(
-                service_id=service_id,
-                operation_name=operation_model.name),
-            parsed_request=parsed_request, operation_model=operation_model, context=context)
+            "request-after-parsing.{service_id}.{operation_name}".format(
+                service_id=service_id, operation_name=operation_model.name
+            ),
+            parsed_request=parsed_request,
+            operation_model=operation_model,
+            context=context,
+        )
 
-        #api_params = first_non_none_response(responses, default=request_dict)
-        #return api_params
+        # api_params = first_non_none_response(responses, default=request_dict)
+        # return api_params
 
     def test_result_dict(self, result_dict, operation_model):
         service_id = self.meta.service_model.service_id.hyphenize()
-        #responses =
+        # responses =
         self.meta.events.emit(
-            'before-result-serialization.{service_id}.{operation_name}'.format(
-                service_id=service_id,
-                operation_name=operation_model.name),
-            result_dict=result_dict, operation_model=operation_model)
+            "before-result-serialization.{service_id}.{operation_name}".format(
+                service_id=service_id, operation_name=operation_model.name
+            ),
+            result_dict=result_dict,
+            operation_model=operation_model,
+        )
 
-        #api_params = first_non_none_response(responses, default=request_dict)
-        #return api_params
+        # api_params = first_non_none_response(responses, default=request_dict)
+        # return api_params
 
     def test_after_result(self, result, operation_model):
         service_id = self.meta.service_model.service_id.hyphenize()
         # responses =
         self.meta.events.emit(
-            'backend-result-received.{service_id}.{operation_name}'.format(
-                service_id=service_id,
-                operation_name=operation_model.name),
-            result=result, operation_model=operation_model)
+            "backend-result-received.{service_id}.{operation_name}".format(
+                service_id=service_id, operation_name=operation_model.name
+            ),
+            result=result,
+            operation_model=operation_model,
+        )
 
         # api_params = first_non_none_response(responses, default=request_dict)
         # return api_params
@@ -69,5 +73,5 @@ def add_custom_class(base_classes, **kwargs):
 
 def get_custom_client(service, **kwargs):
     session = boto3.Session()
-    session.events.register('creating-client-class', add_custom_class)
+    session.events.register("creating-client-class", add_custom_class)
     return session.client(service, **kwargs)

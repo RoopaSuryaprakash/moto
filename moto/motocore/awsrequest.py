@@ -9,29 +9,32 @@ from moto.motocore.regions import EndpointResolver
 from moto.motocore.client import get_custom_client
 from botocore.compat import unquote
 from botocore import xform_name
+
 # put this in motocore.utils
 # SERVICE_ALIASES = {v: k for k, v in EVENT_ALIASES.items()}
 import boto3
 from werkzeug.http import parse_options_header, parse_authorization_header
-DEFAULT_ENCODING = 'utf-8'
+
+DEFAULT_ENCODING = "utf-8"
 
 
 def convert_to_request_dict(request, full_url, headers):
     parsed = urlparse(full_url)
     request_dict = {
-        'hostname': parsed.hostname,
-        'url_path': parsed.path,  # getattr(request, 'path', '/'),
-        'query_string': parsed.query,  # getattr(request, 'query_string', ''),
-        'method': getattr(request, 'method', 'GET'),
-        'headers': getattr(request, 'headers', headers),
-        'body': getattr(request, 'body', None),
-        'url': getattr(request, 'url', full_url),
+        "hostname": parsed.hostname,
+        "url_path": parsed.path,  # getattr(request, 'path', '/'),
+        "query_string": parsed.query,  # getattr(request, 'query_string', ''),
+        "method": getattr(request, "method", "GET"),
+        "headers": getattr(request, "headers", headers),
+        "body": getattr(request, "body", None),
+        "url": getattr(request, "url", full_url),
     }
     normalize_request_dict(request_dict)
-    request_dict['context'] = aws_context_from_request(request_dict)
+    request_dict["context"] = aws_context_from_request(request_dict)
     # TODO: Need to get this dict into a class like they do in botocore so I don't have to do dict notation...
     return request_dict_to_parsed(request_dict)
     # return request_dict
+
 
 def aws_context_from_headers(headers):
     # This needs to be broken out into proper auth and signer modules...
@@ -40,68 +43,71 @@ def aws_context_from_headers(headers):
     # For example: IAM region is `aws-global` but the credentialScope for the header is `us-east-1`
     # This is a special case, but we'll need to pick which one to return (or, alternatively, have
     # the IAM backends reference the same backend object for `aws-global` and `us-east-1`
-    value = headers.get('Authorization')
+    value = headers.get("Authorization")
     if not value:
         return
     try:
-        auth_type, auth_info = value.split(' ', 1)
+        auth_type, auth_info = value.split(" ", 1)
         auth_type = auth_type.lower()
     except ValueError:
         return
-    if auth_type == 'aws4-hmac-sha256':
-        options = auth_info.split(',')
-        details = {k: v for option in options for k, v in [option.split('=', 1)]}
-        credential = details.get('Credential')
+    if auth_type == "aws4-hmac-sha256":
+        options = auth_info.split(",")
+        details = {k: v for option in options for k, v in [option.split("=", 1)]}
+        credential = details.get("Credential")
         if credential:
-            _, __, region, service, _____ = credential.split('/')
-            return {'region': region, 'service': service}
+            _, __, region, service, _____ = credential.split("/")
+            return {"region": region, "service": service}
 
 
 def aws_context_from_request(req):
-    ctx = {'api_version': None}
-    auth_ctx = aws_context_from_headers(req['headers'])
+    ctx = {"api_version": None}
+    auth_ctx = aws_context_from_headers(req["headers"])
     if auth_ctx:
         ctx.update(**auth_ctx)
     session = get_session()
-    loader = session.get_component('data_loader')
-    endpoint_data = loader.load_data('endpoints')
+    loader = session.get_component("data_loader")
+    endpoint_data = loader.load_data("endpoints")
     deconstructor = EndpointResolver(endpoint_data)
-    result = deconstructor.deconstruct_endpoint(req['hostname'])
+    result = deconstructor.deconstruct_endpoint(req["hostname"])
     ctx.update(**result)
-    if isinstance(req['body'], dict):
-        ctx['api_version'] = req['body'].get('Version')
-    ctx['service'] = SERVICE_ALIASES.get(ctx['service'], ctx['service'])
+    if isinstance(req["body"], dict):
+        ctx["api_version"] = req["body"].get("Version")
+    ctx["service"] = SERVICE_ALIASES.get(ctx["service"], ctx["service"])
     return ctx
+
 
 def get_protocol_from_headers(headers):
     protocol = None
-    content_type = headers.get('content-type', '')
-    if content_type.startswith('application/x-www-form-urlencoded'):
-        protocol = 'query'
-    elif content_type.startswith('application/x-amz-json'):
-        protocol = 'json'
+    content_type = headers.get("content-type", "")
+    if content_type.startswith("application/x-www-form-urlencoded"):
+        protocol = "query"
+    elif content_type.startswith("application/x-amz-json"):
+        protocol = "json"
     return protocol
 
 
 def request_dict_to_parsed(request_dict):
     from moto.motocore import client
-    ctx = request_dict['context']
+
+    ctx = request_dict["context"]
     client = get_custom_client(
-        ctx['service'],
-        region_name=ctx['region'],
-        api_version=ctx['api_version'],
+        ctx["service"], region_name=ctx["region"], api_version=ctx["api_version"],
     )
 
-
     # The former is for boto because they use Query in places where Boto3 uses json or rest-json, etc.
-    protocol = get_protocol_from_headers(request_dict['headers']) or client.meta.service_model.protocol
+    protocol = (
+        get_protocol_from_headers(request_dict["headers"])
+        or client.meta.service_model.protocol
+    )
 
     from moto.motocore.parsers import RequestParserFactory
+
     parser = RequestParserFactory().create_parser(protocol)
     result = parser.parse(request_dict, client.meta.service_model)
     # backend_action --- hur hur hur
-    params = result['kwargs']
-    backend_action = result['action']
+    params = result["kwargs"]
+    backend_action = result["action"]
     api_action = client.meta.method_to_api_mapping[backend_action]
     operation_model = client.meta.service_model.operation_model(api_action)
     # Need to really nail down interface for parser "result"
@@ -110,10 +116,11 @@ def request_dict_to_parsed(request_dict):
     client.test_request_dict(result, operation_model)
 
     from moto.backends import get_backend
-    backend = get_backend(ctx['service'])[ctx['region']]
+
+    backend = get_backend(ctx["service"])[ctx["region"]]
     if not hasattr(backend, backend_action):
         raise NotImplementedError(
-            'The {service_name}.{operation_name} operation has not been mocked in Moto.'.format(
+            "The {service_name}.{operation_name} operation has not been mocked in Moto.".format(
                 operation_name=api_action,
                 service_name=client.meta.service_model.service_id.hyphenize(),
             )
@@ -121,6 +128,7 @@ def request_dict_to_parsed(request_dict):
     http_status_code = 200
     try:
         import inspect
+
         method = getattr(backend, backend_action)
         # TODO: Only pass parameters that match the call signature; pass all if kwargs is present.
         param_spec = inspect.signature(method)
@@ -134,35 +142,42 @@ def request_dict_to_parsed(request_dict):
 
         # client.test_after_result(result, operation_model)
 
-        if client.can_paginate(backend_action) and ctx['service'] == 'rds':
+        if client.can_paginate(backend_action) and ctx["service"] == "rds":
             result, marker = _paginate_response(result, params)
         else:
             marker = None
         # This needs to be put under a more specific key (currently done in serializer)
-        result_dict = {'result': result}
+        result_dict = {"result": result}
         if marker:
-            result_dict['marker'] = marker
+            result_dict["marker"] = marker
 
         client.test_result_dict(result_dict, operation_model)
 
     except Exception as e:
-        result_dict = {'error': e}
-        http_status_code = getattr(e, 'http_status_code', 400)
+        result_dict = {"error": e}
+        http_status_code = getattr(e, "http_status_code", 400)
     from moto.motocore.serialize import create_serializer
+
     serializer = create_serializer(protocol)
     serialized = serializer.serialize_to_response(result_dict, operation_model)
     # TODO: serialize to response needs to do headers, body, and status code
-    resp_headers = {'status': http_status_code}
+    resp_headers = {"status": http_status_code}
     return http_status_code, resp_headers, serialized
+
 
 # This was pulled from RDS3 but needs to generified and moved to its own module
 MAX_RECORDS = 100
+
+
 def _paginate_response(resources, parameters):
     from moto.rds3.exceptions import InvalidParameterValue
-    marker = parameters.get('marker')
-    page_size = parameters.get('max_records', MAX_RECORDS)
+
+    marker = parameters.get("marker")
+    page_size = parameters.get("max_records", MAX_RECORDS)
     if page_size < 20 or page_size > 100:
-        msg = 'Invalid value {} for MaxRecords. Must be between 20 and 100'.format(page_size)
+        msg = "Invalid value {} for MaxRecords. Must be between 20 and 100".format(
+            page_size
+        )
         raise InvalidParameterValue(msg)
     all_resources = list(resources)
     all_ids = [resource.resource_id for resource in all_resources]
@@ -170,7 +185,7 @@ def _paginate_response(resources, parameters):
         start = all_ids.index(marker) + 1
     else:
         start = 0
-    paginated_resources = all_resources[start:start + page_size]
+    paginated_resources = all_resources[start : start + page_size]
     next_marker = None
     if len(all_resources) > start + page_size:
         next_marker = paginated_resources[-1].resource_id
@@ -231,9 +246,9 @@ def _paginate_response(resources, parameters):
 #     return context
 
 
-
 # Class NormalizeRequest  RequestNormailizer should be the opposite of the preparer classes in botocore
 # basically, instead of converting things to bytes or url_encoding, we do the opposite
+
 
 def normalize_request_dict(request_dict, context=None):
     """
@@ -252,23 +267,24 @@ def normalize_request_dict(request_dict, context=None):
     :param endpoint_url: The full endpoint url, which contains at least
         the scheme, the hostname, and optionally any path components.
     """
+
     def convert_params_to_dict(data, enc):
         parsed = parse_qsl(data, keep_blank_values=True, encoding=enc)
         return {i[0]: i[1] for i in parsed}
-    r = request_dict
-    r['headers'] = HeadersDict(request_dict['headers'])
-    content_type_encoding = get_encoding_from_headers(r['headers'])
-    encoding = content_type_encoding or DEFAULT_ENCODING
-    if isinstance(r['query_string'], six.binary_type):
-        r['query_string'] = r['query_string'].decode(encoding)
-    r['query_string'] = convert_params_to_dict(r['query_string'], encoding)
-    if isinstance(r['body'], six.binary_type):
-        r['body'] = r['body'].decode(encoding)
-    content_type, options = parse_options_header(r['headers'].get('Content-Type'))
-    charset = options.get('charset', DEFAULT_ENCODING)
-    if content_type == 'application/x-www-form-urlencoded':
-        r['body'] = convert_params_to_dict(r['body'], charset)
-    r['context'] = context
-    if context is None:
-        r['context'] = {}
 
+    r = request_dict
+    r["headers"] = HeadersDict(request_dict["headers"])
+    content_type_encoding = get_encoding_from_headers(r["headers"])
+    encoding = content_type_encoding or DEFAULT_ENCODING
+    if isinstance(r["query_string"], six.binary_type):
+        r["query_string"] = r["query_string"].decode(encoding)
+    r["query_string"] = convert_params_to_dict(r["query_string"], encoding)
+    if isinstance(r["body"], six.binary_type):
+        r["body"] = r["body"].decode(encoding)
+    content_type, options = parse_options_header(r["headers"].get("Content-Type"))
+    charset = options.get("charset", DEFAULT_ENCODING)
+    if content_type == "application/x-www-form-urlencoded":
+        r["body"] = convert_params_to_dict(r["body"], charset)
+    r["context"] = context
+    if context is None:
+        r["context"] = {}

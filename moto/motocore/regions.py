@@ -26,24 +26,28 @@ LOG = logging.getLogger(__name__)
 class EndpointResolver(BotocoreEndpointResolver):
 
     SERVICES_BLACKLIST = [
-        'docdb',    # This conflicts with RDS.
-        'neptune',  # This also conflicts with RDS...
+        "docdb",  # This conflicts with RDS.
+        "neptune",  # This also conflicts with RDS...
     ]
 
     def deconstruct_endpoint(self, hostname):
         # Iterate over each partition until a match is found.
         results = []
-        for partition in self._endpoint_data['partitions']:
-            for service in partition['services']:
+        for partition in self._endpoint_data["partitions"]:
+            for service in partition["services"]:
                 if service in EndpointResolver.SERVICES_BLACKLIST:
                     continue
-                for region in partition['services'][service]['endpoints']:
+                for region in partition["services"][service]["endpoints"]:
                     ep = self._endpoint_for_partition(partition, service, region)
                     if hostname in [
-                        ep.get('sslCommonName'),
-                        ep.get('hostname'),
+                        ep.get("sslCommonName"),
+                        ep.get("hostname"),
                     ]:
-                        result = {'service': service, 'partition': partition['partition'], 'region': region}
+                        result = {
+                            "service": service,
+                            "partition": partition["partition"],
+                            "region": region,
+                        }
                         results.append(result)
         # Bleh... this can result in a number of matches docdb and rds, for example
         return results[0]
