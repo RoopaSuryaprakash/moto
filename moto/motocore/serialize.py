@@ -687,19 +687,30 @@ class DictSerializer(Serializer):
         method(serialized, value, shape, key)
 
     def _get_value(self, value, key, shape):
-        key = xform_name(key)
-        if isinstance(value, dict):
-            new_value = value.get(key, None)
-        elif isinstance(value, object):
-            new_value = getattr(value, key, None)
-        else:
-            new_value = None
+        new_value = None
+        for key in self._get_possible_keys(key, value):
+            if isinstance(value, dict):
+                new_value = value.get(key, None)
+            elif isinstance(value, object):
+                new_value = getattr(value, key, None)
+
+            if new_value is not None:
+                break
         # if new_value is None:
         #     if shape.type_name == 'list':
         #         new_value = []
         #     elif shape.type_name == 'structure':
         #         new_value = {}
         return new_value
+
+    def _get_possible_keys(self, key, obj):
+        possible_keys = [xform_name(key), key]
+        if isinstance(obj, object):
+            class_name = obj.__class__.__name__
+            if class_name in key:
+                short_key = key.replace(class_name, '')
+                possible_keys += [xform_name(short_key), short_key]
+        return possible_keys
 
     def _serialize_type_structure(self, serialized, value, shape, key):
         if value is None:
