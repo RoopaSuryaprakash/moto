@@ -135,26 +135,19 @@ def fix_polly_result_issues(result_dict, operation_model, **kwargs):
         result_dict["result"] = new_value
 
 
-def fix_redshift_request_issues(parsed_request, operation_model, **kwargs):
-    if operation_model.name == "CreateKey":
-        params = parsed_request["kwargs"]
-        default_to_none = [
-            "customer_master_key_spec",
-            "tags",
-            "region",
-            "policy",
-            "key_usage",
-        ]
-        for param in default_to_none:
-            if param not in params:
-                params[param] = None
+def fix_redshift_request_issues(parsed_request, operation_model, context, **kwargs):
+    params = parsed_request["kwargs"]
+    if operation_model.name == "CreateCluster":
+        params['region_name'] = context['region']
+    elif operation_model.name == "CreateTags":
+        # Have to make this case insensitive because the current
+        # redshift response method calls the backend with Pascal Case.
+        from botocore.awsrequest import HeadersDict
+        params['tags'] = [HeadersDict(**tag) for tag in params['tags']]
 
 
 def fix_redshift_result_issues(result_dict, operation_model, **kwargs):
-    # Basically we have to make attrs name in their Python equivalent
-    if operation_model.name == "CreateKey":
-        value = result_dict["result"]
-        value.key_id = value.id
+    pass
 
 
 def fix_sqs_request_issues(parsed_request, operation_model, context, **kwargs):
@@ -205,7 +198,7 @@ CUSTOM_HANDLERS = [
     ("before-result-serialization.polly.*", fix_polly_result_issues),
     # Redshift
     ("request-after-parsing.redshift.*", fix_redshift_request_issues),
-    ("before-result-serialization.redshift.*", fix_redshift_request_issues),
+    ("before-result-serialization.redshift.*", fix_redshift_result_issues),
     # SQS
     ("request-after-parsing.sqs.*", fix_sqs_request_issues),
     ("before-result-serialization.sqs.*", fix_sqs_result_issues),
