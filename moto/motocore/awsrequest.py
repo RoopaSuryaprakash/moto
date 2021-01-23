@@ -101,15 +101,30 @@ def request_dict_to_parsed(request_dict):
         or client.meta.service_model.protocol
     )
 
+    from moto.motocore.loaders import Loader
+    from moto.motocore.model import ServiceModel
+    loader = Loader()
+    sm = loader.load_service_model(ctx['service'], 'service-2', api_version=ctx['api_version'])
+    service_model = ServiceModel(sm)
+
     from moto.motocore.parsers import RequestParserFactory
 
     parser = RequestParserFactory().create_parser(protocol)
-    result = parser.parse(request_dict, client.meta.service_model)
+    try:
+
+        result = parser.parse(request_dict, service_model) # client.meta.service_model)
+    except Exception as e:
+        print(e)
+
     # backend_action --- hur hur hur
     params = result["kwargs"]
     backend_action = result["action"]
     api_action = client.meta.method_to_api_mapping[backend_action]
-    operation_model = client.meta.service_model.operation_model(api_action)
+    # operation_model = client.meta.service_model.operation_model(api_action)
+    om = service_model.operation_model(api_action)
+    # THIS IS OUR Op Model with merged extra moto data
+    operation_model = om
+
     # Need to really nail down interface for parser "result"
     # action/kwargs?  action/params?  What else?
     # print(result)
