@@ -330,7 +330,7 @@ class QueryParser(RequestParser):
             member_prefix = self._get_serialized_name(member_shape, member_name)
             if prefix:
                 member_prefix = "%s.%s" % (prefix, member_prefix)
-            if self._has_member(query_params, member_prefix):
+            if self._has_member(query_params, member_prefix) or 'default' in member_shape.metadata:
                 parsed_key = self._parsed_key_name(member_name)
                 parsed[parsed_key] = self._parse_shape(
                     member_shape, query_params, member_prefix
@@ -363,10 +363,13 @@ class QueryParser(RequestParser):
 
     def _handle_boolean(self, shape, query_params, prefix=""):
         value = self._default_handle(shape, query_params, prefix)
-        if value.lower() == "true":
-            return True
-        else:
-            return False
+        if value is True or value is False:
+            return value
+        try:
+            return value.lower() == "true"
+        except AttributeError:
+            pass
+        return False
 
     def _handle_integer(self, shape, query_params, prefix=""):
         value = self._default_handle(shape, query_params, prefix)
@@ -374,7 +377,7 @@ class QueryParser(RequestParser):
 
     def _default_handle(self, shape, query_params, prefix=""):
         # urlparse parses all querystring values into lists.
-        return query_params.get(prefix)
+        return query_params.get(prefix, shape.metadata.get('default'))
 
     def _get_serialized_name(self, shape, default_name):
         return shape.serialization.get("name", default_name)
