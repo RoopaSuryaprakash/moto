@@ -1,0 +1,69 @@
+{
+  "version": 2.0,
+  "merge": {
+    "shapes": {
+
+
+      "CreateClusterMessage": {
+        "members": {
+          "VpcSecurityGroupIds":{
+            "default": null
+          },
+           "ClusterSecurityGroups":{
+            "default": null
+          },
+          "Encrypted": {
+            "default": false
+          },
+          "ClusterVersion": {
+            "default": null
+          },
+          "AllowVersionUpgrade": {
+            "default": true
+          },
+          "Port":
+          {
+            "default": 5439
+          },
+          "NumberOfNodes":{
+            "default": 1
+          },
+          "PubliclyAccessible": {
+            "default": false
+          },
+           "AutomatedSnapshotRetentionPeriod":{
+       "default": 1
+          },
+
+          "ClusterParameterGroupName":{
+            "default": null
+
+          },
+          "ClusterSubnetGroupName": {
+
+            "default": null
+          },
+
+
+          "AvailabilityZone": {
+
+            "default": null
+          },
+          "PreferredMaintenanceWindow": {
+
+            "default": null
+          }
+        }
+      },
+      "DescribeTagsMessage":{
+
+      "members":{
+
+        "ResourceType":{
+         "default": null
+        }
+      }
+    }
+    }
+  }
+}
