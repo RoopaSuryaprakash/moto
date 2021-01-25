@@ -142,11 +142,12 @@ def request_dict_to_parsed(request_dict):
         )
     http_status_code = 200
     try:
-        import inspect
+        from moto.motocore.compat import inspect_getargspec
 
         method = getattr(backend, backend_action)
         # TODO: Only pass parameters that match the call signature; pass all if kwargs is present.
         # param_spec = inspect.signature(method)
+        arg_spec = inspect_getargspec(method)
         # This is super cool because we can use it to only send params
         # that the method accepts and we can also detect VAR_KEYWORD to
         # if we can just pass everything.
