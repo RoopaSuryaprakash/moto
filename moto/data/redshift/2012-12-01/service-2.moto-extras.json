@@ -2,14 +2,12 @@
   "version": 2.0,
   "merge": {
     "shapes": {
-
-
       "CreateClusterMessage": {
         "members": {
-          "VpcSecurityGroupIds":{
+          "VpcSecurityGroupIds": {
             "default": null
           },
-           "ClusterSecurityGroups":{
+          "ClusterSecurityGroups": {
             "default": null
           },
           "Encrypted": {
@@ -21,48 +19,48 @@
           "AllowVersionUpgrade": {
             "default": true
           },
-          "Port":
-          {
+          "Port": {
             "default": 5439
           },
-          "NumberOfNodes":{
+          "NumberOfNodes": {
             "default": 1
           },
           "PubliclyAccessible": {
             "default": false
           },
-           "AutomatedSnapshotRetentionPeriod":{
-       "default": 1
+          "AutomatedSnapshotRetentionPeriod": {
+            "default": 1
           },
-
-          "ClusterParameterGroupName":{
+          "ClusterParameterGroupName": {
             "default": null
-
           },
           "ClusterSubnetGroupName": {
-
             "default": null
           },
-
-
           "AvailabilityZone": {
-
             "default": null
           },
           "PreferredMaintenanceWindow": {
-
             "default": null
           }
         }
       },
-      "DescribeTagsMessage":{
+      "DescribeTagsMessage": {
+        "members": {
+          "ResourceType": {
+            "default": null
+          }
+        }
+      },
+      "DescribeSnapshotCopyGrantsMessage":{
 
       "members":{
-
-        "ResourceType":{
-         "default": null
+        "SnapshotCopyGrantName":{
+          "default":  null
         }
+
       }
+
     }
     }
   }
