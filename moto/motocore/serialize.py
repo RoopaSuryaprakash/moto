@@ -645,6 +645,8 @@ class RestXMLSerializer(BaseRestSerializer):
 
 class DictSerializer(Serializer):
 
+    ALIASES = {}
+
     TIMESTAMP_FORMAT = "iso8601"
 
     def serialize_object(self, value, operation_model):
@@ -710,6 +712,12 @@ class DictSerializer(Serializer):
             if class_name in key:
                 short_key = key.replace(class_name, '')
                 possible_keys += [xform_name(short_key), short_key]
+            # ALIAS HACK: Doing this to avoid having to rename classes.
+            # e.g. Ami to Image
+            class_name = self.ALIASES.get(obj.__class__.__name__)
+            if class_name is not None and class_name in key:
+                short_key = key.replace(class_name, '')
+                possible_keys += [xform_name(short_key), short_key]
         return possible_keys
 
     def _serialize_type_structure(self, serialized, value, shape, key):
@@ -725,10 +733,12 @@ class DictSerializer(Serializer):
             serialized[key] = new_serialized
             serialized = new_serialized
         for member_key, member_shape in shape.members.items():
-            if "name" in member_shape.serialization:
-                member_key = member_shape.serialization["name"]
+            # if "name" in member_shape.serialization:
+            #     member_key = member_shape.serialization["name"]
             member_value = self._get_value(value, member_key, member_shape)
             if member_value is not None:
+                if "name" in member_shape.serialization:
+                    member_key = member_shape.serialization["name"]
                 self._serialize(serialized, member_value, member_shape, member_key)
 
     def _serialize_type_map(self, serialized, value, shape, key):
@@ -771,7 +781,7 @@ class DictSerializer(Serializer):
 class XmlSerializer(DictSerializer):
     def serialize_to_response(self, value, operation_model):
 
-        if "error" in value:
+        if isinstance(value, dict) and "error" in value:
             serialized = self._serialize_exception(value["error"], operation_model)
         else:
             root_key = "{}Response".format(operation_model.name)
@@ -792,7 +802,7 @@ class XmlSerializer(DictSerializer):
                 # a al the emit handlers/hooks in botocore to fix this before it even gets
                 # to the serializer.
                 # botocore.hooks:Event creating-client-class.rds: calling handler <function add_generate_presigned_url at 0x102a041e0>
-                if "result" in value:
+                if isinstance(value, dict) and "result" in value:
                     result = value["result"]
                     result_key = None
                     for member_key, member in output_shape.members.items():

@@ -722,6 +722,10 @@ class Instance(TaggedEC2Resource, BotoInstance, CloudFormationModel):
                 self.ec2_backend.delete_volume(volume_id)
 
     @property
+    def state(self):
+        return self._state
+
+    @property
     def get_block_device_mapping(self):
         return self.block_device_mapping.items()
 
@@ -1603,6 +1607,29 @@ class Ami(TaggedEC2Resource):
             volume.id, "Auto-created snapshot for AMI %s" % self.id, owner_id
         )
         self.ec2_backend.delete_volume(volume.id)
+
+    @property
+    def public(self):
+        return self.is_public
+
+    @property
+    def tags(self):
+        return self.get_tags()
+
+    @property
+    def block_device_mappings(self):
+        bvm = [
+            {
+                'device_name': self.root_device_name,
+                'ebs': {
+                    'snapshot_id': self.ebs_snapshot.id,
+                    'volume_size': 15,
+                    'delete_on_termination': False,
+                    'volume_type': 'standard',
+                }
+            },
+        ]
+        return bvm
 
     @property
     def is_public(self):
@@ -3272,6 +3299,10 @@ class Volume(TaggedEC2Resource, CloudFormationModel):
             size=properties.get("Size"), zone_name=properties.get("AvailabilityZone")
         )
         return volume
+
+    @property
+    def availability_zone(self):
+        return self.zone.name
 
     @property
     def physical_resource_id(self):

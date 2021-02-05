@@ -99,6 +99,26 @@ from moto import MOTO_ROOT
 logger = logging.getLogger(__name__)
 
 
+cache = {}
+
+
+def _load_service_model(service_name, api_version=None):
+    from moto.motocore.model import ServiceModel
+    if service_name in cache and api_version is not None:
+        if api_version in cache[service_name]:
+            return cache[service_name][api_version]
+    loader = Loader()
+    json_model = loader.load_service_model(
+        service_name, "service-2", api_version=api_version
+    )
+    service_model = ServiceModel(json_model, service_name=service_name)
+    if service_name not in cache:
+        cache[service_name] = {}
+    if api_version is not None:
+        cache[service_name][api_version] = service_model
+    return service_model
+
+
 class Loader(BotocoreLoader):
     """Find and load data models.
 

@@ -91,3 +91,41 @@ class EC2Response(
     @property
     def should_autoescape(self):
         return True
+
+    def _dispatch(self, request, full_url, headers):
+        from moto.motocore.loaders import _load_service_model
+        from moto.motocore.serialize import create_serializer
+
+        self.setup_class(request, full_url, headers)
+        model = _load_service_model('ec2', api_version=self._get_param('Version'))
+        self.operation_model = model.operation_model(self._get_action())
+        self.serializer = create_serializer('query')
+        self.serializer.ALIASES.update({'Ami': 'Image'})
+        return self.call_action()
+
+    def response_template(self, source):
+        supported_actions = [
+            'CreateImage',
+            'DescribeImages',
+            'CopyImage',
+            'RegisterImage',
+            'DeregisterImage',
+            'RunInstances',
+            'DescribeInstances',
+            'DescribeVolumes',
+        ]
+        source_action = source.partition('Response')[0][1:]
+        if source_action in supported_actions:
+            return self
+        return super(AmisResponse, self).response_template(source)
+
+    def render(self, **kwargs):
+        if self.operation_model.name in ['CreateImage','CopyImage','RegisterImage']:
+            kwargs = {'image_id': kwargs.get('image').id}
+        elif self.operation_model.name in ['RunInstances']:
+            kwargs = kwargs.get('reservation', object)
+        elif self.operation_model.name in ['DescribeInstances']:
+            kwargs = kwargs
+        serialized = self.serializer.serialize_object(kwargs, self.operation_model)
+        serialized = self.serializer.serialize_to_response(kwargs, self.operation_model)
+        return serialized

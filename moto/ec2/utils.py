@@ -430,7 +430,7 @@ def tag_filter_matches(obj, filter_name, filter_values):
 
 
 filter_dict_attribute_mapping = {
-    "instance-state-name": "state",
+    "instance-state-name": "_state.name",
     "instance-id": "id",
     "state-reason-code": "_state_reason.code",
     "source-dest-check": "source_dest_check",
