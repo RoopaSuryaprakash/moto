@@ -113,8 +113,12 @@ class EC2Response(
             'RunInstances',
             'DescribeInstances',
             'DescribeVolumes',
+            'DescribeSnapshots',
+            'TerminateInstances',
+            'DescribeTags',
+   #         'DescribeImageAttribute',
         ]
-        source_action = source.partition('Response')[0][1:]
+        source_action = source.strip().partition('Response')[0][1:]
         if source_action in supported_actions:
             return self
         return super(AmisResponse, self).response_template(source)
@@ -124,8 +128,9 @@ class EC2Response(
             kwargs = {'image_id': kwargs.get('image').id}
         elif self.operation_model.name in ['RunInstances']:
             kwargs = kwargs.get('reservation', object)
-        elif self.operation_model.name in ['DescribeInstances']:
-            kwargs = kwargs
+        elif self.operation_model.name in ['DescribeImageAttribute']:
+            kwargs['image_id'] = kwargs['ami_id']
+
         serialized = self.serializer.serialize_object(kwargs, self.operation_model)
         serialized = self.serializer.serialize_to_response(kwargs, self.operation_model)
         return serialized

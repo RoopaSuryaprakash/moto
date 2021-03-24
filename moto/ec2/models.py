@@ -730,6 +730,17 @@ class Instance(TaggedEC2Resource, BotoInstance, CloudFormationModel):
         return self.block_device_mapping.items()
 
     @property
+    def block_device_mappings(self):
+        bdm = []
+        for device_name, device_object in self.get_block_device_mapping:
+            item = {
+                'DeviceName': device_name,
+                'Ebs': device_object
+            }
+            bdm.append(item)
+        return bdm
+
+    @property
     def private_ip(self):
         return self.nics[0].private_ip_address
 
@@ -3314,6 +3325,8 @@ class Volume(TaggedEC2Resource, CloudFormationModel):
             return "in-use"
         else:
             return "available"
+
+    state = status
 
     def get_filter_value(self, filter_name):
         if filter_name.startswith("attachment") and not self.attachment:
