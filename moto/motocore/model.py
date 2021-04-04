@@ -46,5 +46,7 @@ class ShapeResolver(BotocoreShapeResolver):
         result = super().get_shape_by_name(shape_name, member_traits)
         # Patch each shape to use our additional attrs
         # At first I was just adding and it kept adding default over and over...
-        result.METADATA_ATTRS = list(set(result.METADATA_ATTRS) | set(MOTO_METADATA_ATTRS))
+        result.METADATA_ATTRS = list(
+            set(result.METADATA_ATTRS) | set(MOTO_METADATA_ATTRS)
+        )
         return result

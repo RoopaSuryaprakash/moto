@@ -5,21 +5,19 @@ from moto.motocore.serialize import create_serializer
 
 
 def test_ami_serialization():
-    model = _load_service_model('ec2')
-    backend = ec2_backends['us-east-1']
+    model = _load_service_model("ec2")
+    backend = ec2_backends["us-east-1"]
     ami = Ami(
-        backend,
-        ami_id='ami-1234',
-        architecture='i386',
-        virtualization_type='hvm',
+        backend, ami_id="ami-1234", architecture="i386", virtualization_type="hvm",
     )
     operation_model = model.operation_model("DescribeImages")
-    result_dict = {'Images': [ami, ami]}
-    serializer = create_serializer('query')
-    serializer.ALIASES.update({'Ami':'Image'})
+    result_dict = {"Images": [ami, ami]}
+    serializer = create_serializer("query")
+    serializer.ALIASES.update({"Ami": "Image"})
     serialized = serializer.serialize_object(result_dict, operation_model)
     serialized = serializer.serialize_to_response(result_dict, operation_model)
     print(serialized)
+
 
 # TODO:
 # Test the various ways of getting an attribute

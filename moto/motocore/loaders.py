@@ -104,6 +104,7 @@ cache = {}
 
 def _load_service_model(service_name, api_version=None):
     from moto.motocore.model import ServiceModel
+
     if service_name in cache and api_version is not None:
         if api_version in cache[service_name]:
             return cache[service_name][api_version]

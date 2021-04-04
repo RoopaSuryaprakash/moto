@@ -710,13 +710,13 @@ class DictSerializer(Serializer):
         if isinstance(obj, object):
             class_name = obj.__class__.__name__
             if class_name in key:
-                short_key = key.replace(class_name, '')
+                short_key = key.replace(class_name, "")
                 possible_keys += [xform_name(short_key), short_key]
             # ALIAS HACK: Doing this to avoid having to rename classes.
             # e.g. Ami to Image
             class_name = self.ALIASES.get(obj.__class__.__name__)
             if class_name is not None and class_name in key:
-                short_key = key.replace(class_name, '')
+                short_key = key.replace(class_name, "")
                 possible_keys += [xform_name(short_key), short_key]
         return possible_keys
 
@@ -750,7 +750,7 @@ class DictSerializer(Serializer):
     def _serialize_type_list(self, serialized, value, shape, key):
         list_obj = []
         serialized[key] = {}
-        serialized[key][self._get_serialized_name(shape.member, "")] = list_obj
+        serialized[key][self._get_serialized_name(shape.member, "member")] = list_obj
         for list_item in value:
             wrapper = {}
             # The JSON list serialization is the only case where we aren't

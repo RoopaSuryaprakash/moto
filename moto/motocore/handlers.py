@@ -138,12 +138,13 @@ def fix_polly_result_issues(result_dict, operation_model, **kwargs):
 def fix_redshift_request_issues(parsed_request, operation_model, context, **kwargs):
     params = parsed_request["kwargs"]
     if operation_model.name == "CreateCluster":
-        params['region_name'] = context['region']
+        params["region_name"] = context["region"]
     elif operation_model.name == "CreateTags":
         # Have to make this case insensitive because the current
         # redshift response method calls the backend with Pascal Case.
         from botocore.awsrequest import HeadersDict as CaseInsensitiveDict
-        params['tags'] = [CaseInsensitiveDict(**tag) for tag in params['tags']]
+
+        params["tags"] = [CaseInsensitiveDict(**tag) for tag in params["tags"]]
 
 
 def fix_redshift_result_issues(result_dict, operation_model, **kwargs):

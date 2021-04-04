@@ -9,9 +9,7 @@ py36 = sys.version_info >= (3, 6)
 
 # https://github.com/sqlalchemy/alembic/commit/41b100e6300e0680e9457149ac6f36ad7f78909e
 # https://github.com/sqlalchemy/sqlalchemy/commit/df99e1ef5f334ce7f4c8118c3e0bdf2949f54de3
-ArgSpec = collections.namedtuple(
-    "ArgSpec", ["args", "varargs", "keywords", "defaults"]
-)
+ArgSpec = collections.namedtuple("ArgSpec", ["args", "varargs", "keywords", "defaults"])
 
 
 def inspect_getargspec(func):

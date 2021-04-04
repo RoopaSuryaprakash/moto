@@ -103,8 +103,11 @@ def request_dict_to_parsed(request_dict):
 
     from moto.motocore.loaders import Loader
     from moto.motocore.model import ServiceModel
+
     loader = Loader()
-    sm = loader.load_service_model(ctx['service'], 'service-2', api_version=ctx['api_version'])
+    sm = loader.load_service_model(
+        ctx["service"], "service-2", api_version=ctx["api_version"]
+    )
     service_model = ServiceModel(sm)
 
     from moto.motocore.parsers import RequestParserFactory
@@ -112,7 +115,7 @@ def request_dict_to_parsed(request_dict):
     parser = RequestParserFactory().create_parser(protocol)
     try:
 
-        result = parser.parse(request_dict, service_model) # client.meta.service_model)
+        result = parser.parse(request_dict, service_model)  # client.meta.service_model)
     except Exception as e:
         print(e)
 
