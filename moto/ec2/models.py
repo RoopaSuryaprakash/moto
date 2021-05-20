@@ -733,10 +733,7 @@ class Instance(TaggedEC2Resource, BotoInstance, CloudFormationModel):
     def block_device_mappings(self):
         bdm = []
         for device_name, device_object in self.get_block_device_mapping:
-            item = {
-                'DeviceName': device_name,
-                'Ebs': device_object
-            }
+            item = {"DeviceName": device_name, "Ebs": device_object}
             bdm.append(item)
         return bdm
 
@@ -1631,13 +1628,13 @@ class Ami(TaggedEC2Resource):
     def block_device_mappings(self):
         bvm = [
             {
-                'device_name': self.root_device_name,
-                'ebs': {
-                    'snapshot_id': self.ebs_snapshot.id,
-                    'volume_size': 15,
-                    'delete_on_termination': False,
-                    'volume_type': 'standard',
-                }
+                "device_name": self.root_device_name,
+                "ebs": {
+                    "snapshot_id": self.ebs_snapshot.id,
+                    "volume_size": 15,
+                    "delete_on_termination": False,
+                    "volume_type": "standard",
+                },
             },
         ]
         return bvm

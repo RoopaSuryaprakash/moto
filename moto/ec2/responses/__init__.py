@@ -97,39 +97,39 @@ class EC2Response(
         from moto.motocore.serialize import create_serializer
 
         self.setup_class(request, full_url, headers)
-        model = _load_service_model('ec2', api_version=self._get_param('Version'))
+        model = _load_service_model("ec2", api_version=self._get_param("Version"))
         self.operation_model = model.operation_model(self._get_action())
-        self.serializer = create_serializer('query')
-        self.serializer.ALIASES.update({'Ami': 'Image'})
+        self.serializer = create_serializer("query")
+        self.serializer.ALIASES.update({"Ami": "Image"})
         return self.call_action()
 
     def response_template(self, source):
         supported_actions = [
-            'CreateImage',
-            'DescribeImages',
-            'CopyImage',
-            'RegisterImage',
-            'DeregisterImage',
-            'RunInstances',
-            'DescribeInstances',
-            'DescribeVolumes',
-            'DescribeSnapshots',
-            'TerminateInstances',
-            'DescribeTags',
-   #         'DescribeImageAttribute',
+            "CreateImage",
+            "DescribeImages",
+            "CopyImage",
+            "RegisterImage",
+            "DeregisterImage",
+            "RunInstances",
+            "DescribeInstances",
+            "DescribeVolumes",
+            "DescribeSnapshots",
+            "TerminateInstances",
+            "DescribeTags",
+            #         'DescribeImageAttribute',
         ]
-        source_action = source.strip().partition('Response')[0][1:]
+        source_action = source.strip().partition("Response")[0][1:]
         if source_action in supported_actions:
             return self
         return super(AmisResponse, self).response_template(source)
 
     def render(self, **kwargs):
-        if self.operation_model.name in ['CreateImage','CopyImage','RegisterImage']:
-            kwargs = {'image_id': kwargs.get('image').id}
-        elif self.operation_model.name in ['RunInstances']:
-            kwargs = kwargs.get('reservation', object)
-        elif self.operation_model.name in ['DescribeImageAttribute']:
-            kwargs['image_id'] = kwargs['ami_id']
+        if self.operation_model.name in ["CreateImage", "CopyImage", "RegisterImage"]:
+            kwargs = {"image_id": kwargs.get("image").id}
+        elif self.operation_model.name in ["RunInstances"]:
+            kwargs = kwargs.get("reservation", object)
+        elif self.operation_model.name in ["DescribeImageAttribute"]:
+            kwargs["image_id"] = kwargs["ami_id"]
 
         serialized = self.serializer.serialize_object(kwargs, self.operation_model)
         serialized = self.serializer.serialize_to_response(kwargs, self.operation_model)

@@ -62,7 +62,7 @@ class Serializer(object):
     DEFAULT_ENCODING = "utf-8"
 
     def serialize_to_response(self, result_dict, operation_model):
-        """Serialize parameters into an HTTP request.
+        """Serialize result into an HTTP response.
 
         This method takes user provided parameters and a shape
         model and serializes the parameters to an HTTP request.
@@ -71,12 +71,9 @@ class Serializer(object):
         interface or standard for an HTTP request.  It instead returns
         a dictionary of:
 
-            * 'url_path'
-            * 'host_prefix'
-            * 'query_string'
-            * 'headers'
             * 'body'
-            * 'method'
+            * 'headers'
+            * 'status_code'
 
         It is then up to consumers to decide how to map this to a Request
         object of their HTTP library of choice.  Below is an example
@@ -97,9 +94,9 @@ class Serializer(object):
         :param operation_model: The OperationModel object that describes
             the operation.
         """
-        raise NotImplementedError("serialize_to_request")
+        raise NotImplementedError("serialize_to_response")
 
-    def _create_default_request(self):
+    def _create_default_response(self):
         # Creates a boilerplate default request dict that subclasses
         # can use as a starting point.
         serialized = {
@@ -779,16 +776,41 @@ class DictSerializer(Serializer):
 
 
 class XmlSerializer(DictSerializer):
+
+    def _is_modeled_error_shape(self, value, operation_model):
+        shape_name = value.__class__.__name__
+        return operation_model.service_model.shape_for(shape_name)
+
+
     def serialize_to_response(self, value, operation_model):
 
-        if isinstance(value, dict) and "error" in value:
-            serialized = self._serialize_exception(value["error"], operation_model)
+        if isinstance(value.get('error'), Exception):
+            value = value.get('error')
+            error_shape = self._is_modeled_error_shape(value, operation_model)
+            if error_shape is not None:
+                metadata = error_shape.metadata.get('error', {})
+                root_key = "ErrorResponse"
+                serialized = {
+                    "ErrorResponse": {
+                        "@xmlns": operation_model.metadata["xmlNamespace"],
+                        "ResponseMetadata": {"RequestId": get_random_message_id()},
+                    }
+                }
+                start = serialized[root_key]
+                start["Error"] = {}
+                start = start["Error"]
+                if 'code' in metadata:
+                    start['Code']=metadata['code']
+                if metadata.get('senderFault', False):
+                    start['Type'] = 'Sender'
+                start['Message'] = str(value)
+                #self._serialize(start, value, error_shape, None)
         else:
             root_key = "{}Response".format(operation_model.name)
             serialized = {
                 root_key: {
                     "@xmlns": operation_model.metadata["xmlNamespace"],
-                    "ResponseMetadata": {"RequestId": get_random_message_id()},
+                    "RequestId": get_random_message_id(),
                 }
             }
             output_shape = operation_model.output_shape

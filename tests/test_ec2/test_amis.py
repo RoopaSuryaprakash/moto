@@ -25,7 +25,7 @@ def test_ami_create_and_delete():
     conn.get_all_volumes().should.have.length_of(0)
     conn.get_all_snapshots().should.have.length_of(initial_ami_count)
 
-    reservation = conn.run_instances(EXAMPLE_AMI_ID,kernel_id='fake-id')
+    reservation = conn.run_instances(EXAMPLE_AMI_ID, kernel_id="fake-id")
     instance = reservation.instances[0]
 
     with pytest.raises(EC2ResponseError) as ex:
