@@ -101,14 +101,11 @@ def request_dict_to_parsed(request_dict):
         or client.meta.service_model.protocol
     )
 
-    service_model = client.meta.service_model
-
     from moto.motocore.parsers import RequestParserFactory
 
     parser = RequestParserFactory().create_parser(protocol)
     try:
-
-        result = parser.parse(request_dict, service_model)  # client.meta.service_model)
+        result = parser.parse(request_dict, client.meta.service_model)
     except Exception as e:
         print(e)
 
@@ -116,10 +113,7 @@ def request_dict_to_parsed(request_dict):
     params = result["kwargs"]
     backend_action = result["action"]
     api_action = client.meta.method_to_api_mapping[backend_action]
-    # operation_model = client.meta.service_model.operation_model(api_action)
-    om = service_model.operation_model(api_action)
-    # THIS IS OUR Op Model with merged extra moto data
-    operation_model = om
+    operation_model = client.meta.service_model.operation_model(api_action)
 
     # Need to really nail down interface for parser "result"
     # action/kwargs?  action/params?  What else?
@@ -188,6 +182,7 @@ def _paginate_response(resources, parameters):
 
     marker = parameters.get("marker")
     page_size = parameters.get("max_records", MAX_RECORDS)
+    # TODO: This validation should be done during parameter parsing
     if page_size < 20 or page_size > 100:
         msg = "Invalid value {} for MaxRecords. Must be between 20 and 100".format(
             page_size
@@ -206,67 +201,13 @@ def _paginate_response(resources, parameters):
     return paginated_resources, next_marker
 
 
-# def _create_default_context():
-#     default_context = {
-#         'service_name': None,
-#         'action': None,
-#         'api_version': None,
-#         'region_name': None,
-#         'partition_name': None,
-#         'params': {},
-#         'protocol': None
-#     }
-#     return default_context
-
-
-# def get_request_context(request_dict):
-#
-#     headers = HeadersDict(request_dict['headers'])
-#     # https://stackoverflow.com/questions/14592762/a-good-way-to-get-the-charset-encoding-of-an-http-response-in-python
-#     content_type, options = parse_options_header(headers.get('Content-Type'))
-#     charset = options.get('charset', DEFAULT_ENCODING)
-#     body = request_dict['body'] or request_dict['query_string']
-#
-#     # This if/else should probably be in the parsers main function...
-#     # We can just pass in the service model and then we can get the action
-#     # and proceed... Oh, no, wait, we need the api-version for the service model too...
-#     if content_type.startswith('application/x-amz-json'):
-#         params = json.loads(body)
-#         action = headers.get('X-Amz-Target', '.').split('.')[-1]
-#         api_version = None
-#         protocol = None
-#     else:  # content_type == 'application/x-www-form-urlencoded':
-#         if request_dict['method'] == 'GET':
-#             data = request_dict['query_string']
-#         else:
-#             data = request_dict['body']
-#         # https://docs.python.org/3/library/urllib.parse.html#urllib.parse.parse_qs
-#         parsed_data = parse_qsl(data, keep_blank_values=True, encoding=charset)
-#         params = {i[0]: i[1] for i in parsed_data}
-#         api_version = params.pop('Version', None)
-#         action = params.pop('Action', None)
-#         protocol = 'query'
-#
-#     context = _create_default_context()
-#     if params:
-#         context['params'] = params
-#     if action:
-#         context['action'] = action
-#     if api_version:
-#         context['api_version'] = api_version
-#     if protocol:
-#         context['protocol'] = protocol
-#
-#     return context
-
-
-# Class NormalizeRequest  RequestNormailizer should be the opposite of the preparer classes in botocore
+# Class NormalizeRequest  RequestNormalizer should be the opposite of the preparer classes in botocore
 # basically, instead of converting things to bytes or url_encoding, we do the opposite
 
 
 def normalize_request_dict(request_dict, context=None):
     """
-    This method nomalizes a request dict to be created into an
+    This method normalizes a request dict to be created into an
     AWSRequestObject. This normalizes the request dict by decoding
     the querystring and body
 
