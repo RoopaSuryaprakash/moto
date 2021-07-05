@@ -88,4 +88,7 @@ def get_custom_client(service, **kwargs):
     )
     client.meta._service_model = ServiceModel(model)
 
+    # TODO: User our Parser/Serializer
+    # Serializer might be more complicated because request could ask for JSON instead of XML
+
     return client
