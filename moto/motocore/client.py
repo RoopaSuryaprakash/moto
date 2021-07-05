@@ -74,4 +74,18 @@ def add_custom_class(base_classes, **kwargs):
 def get_custom_client(service, **kwargs):
     session = boto3.Session()
     session.events.register("creating-client-class", add_custom_class)
-    return session.client(service, **kwargs)
+    client = session.client(service, **kwargs)
+
+    # Use our loader
+    # TODO: We'll probably need to override/overwrite all the botocore client stuff
+    # Like create a client creation process that utilizes what we can from botocore
+    from moto.motocore.loaders import Loader
+    from moto.motocore.model import ServiceModel
+
+    client._loader = Loader()
+    model = client._loader.load_service_model(
+        client._service_model.service_name, "service-2", api_version=client._service_model.api_version
+    )
+    client.meta._service_model = ServiceModel(model)
+
+    return client

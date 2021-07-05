@@ -101,14 +101,7 @@ def request_dict_to_parsed(request_dict):
         or client.meta.service_model.protocol
     )
 
-    from moto.motocore.loaders import Loader
-    from moto.motocore.model import ServiceModel
-
-    loader = Loader()
-    sm = loader.load_service_model(
-        ctx["service"], "service-2", api_version=ctx["api_version"]
-    )
-    service_model = ServiceModel(sm)
+    service_model = client.meta.service_model
 
     from moto.motocore.parsers import RequestParserFactory
 
@@ -161,6 +154,8 @@ def request_dict_to_parsed(request_dict):
 
         # client.test_after_result(result, operation_model)
 
+        # TODO: We should actually make a paginate decorator and then just
+        # call the method decorated if can_paginate is True
         if client.can_paginate(backend_action) and ctx["service"] == "rds":
             result, marker = _paginate_response(result, params)
         else:
