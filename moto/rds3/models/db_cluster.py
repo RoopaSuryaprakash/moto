@@ -9,7 +9,7 @@ from .tag import TaggableRDSResource
 from .. import utils
 from ..exceptions import (
     DBClusterNotFound,
-    DBClusterToBeDeletedHasActiveMembers,
+    DBClusterToBeDeletedHasActiveMembersFault,
     InvalidAvailabilityZones,
     InvalidParameterValue,
 )
@@ -215,7 +215,7 @@ class DBClusterBackend(BaseRDSBackend):
     ):
         cluster = self.get_db_cluster(db_cluster_identifier)
         if cluster.members:
-            raise DBClusterToBeDeletedHasActiveMembers()
+            raise DBClusterToBeDeletedHasActiveMembersFault()
         cluster.delete_events()
         return self.db_clusters.pop(db_cluster_identifier)
 

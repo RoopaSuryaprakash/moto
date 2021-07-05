@@ -10,6 +10,42 @@
             "default": 100
           }
         }
+      },
+      "DBClusterToBeDeletedHasActiveMembersFault": {
+        "type": "structure",
+        "members": {
+        },
+        "documentation": "",
+        "error": {
+          "code": "DBClusterToBeDeletedHasActiveMembers",
+          "httpStatusCode": 400,
+          "senderFault": true
+        },
+        "exception": true
+      },
+      "InvalidParameterValue": {
+        "type": "structure",
+        "members": {
+        },
+        "documentation": "",
+        "error": {
+          "code": "InvalidParameterValue",
+          "httpStatusCode": 400,
+          "senderFault": true
+        },
+        "exception": true
+      },
+      "InvalidParameterCombination": {
+        "type": "structure",
+        "members": {
+        },
+        "documentation": "",
+        "error": {
+          "code": "InvalidParameterCombination",
+          "httpStatusCode": 400,
+          "senderFault": true
+        },
+        "exception": true
       }
     }
   }

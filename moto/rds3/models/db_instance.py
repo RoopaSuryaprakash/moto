@@ -11,7 +11,7 @@ from ..exceptions import (
     DBInstanceAlreadyExists,
     DBInstanceNotFound,
     InvalidDBClusterStateFault,
-    InvalidDBInstanceState,
+    InvalidDBInstanceStateFault,
     InvalidAvailabilityZones,
     InvalidParameterValue,
     InvalidParameterCombination,
@@ -495,7 +495,7 @@ class DBInstanceBackend(BaseRDSBackend):
             # todo: more db types not supported by stop/start instance api
             raise InvalidDBClusterStateFault(db_instance_identifier)
         if database.status != "available":
-            raise InvalidDBInstanceState(db_instance_identifier, "stop")
+            raise InvalidDBInstanceStateFault(db_instance_identifier, "stop")
         if db_snapshot_identifier:
             self.create_db_snapshot(db_instance_identifier, db_snapshot_identifier)
         database.status = "stopped"
@@ -505,7 +505,7 @@ class DBInstanceBackend(BaseRDSBackend):
         database = self.get_db_instance(db_instance_identifier)
         # todo: bunch of different error messages to be generated from this api call
         if database.status != "stopped":
-            raise InvalidDBInstanceState(db_instance_identifier, "start")
+            raise InvalidDBInstanceStateFault(db_instance_identifier, "start")
         database.status = "available"
         return database
 

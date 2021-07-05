@@ -779,7 +779,10 @@ class XmlSerializer(DictSerializer):
 
     def _is_modeled_error_shape(self, value, operation_model):
         shape_name = value.__class__.__name__
-        return operation_model.service_model.shape_for(shape_name)
+        try:
+            return operation_model.service_model.shape_for(shape_name)
+        except Exception:
+            return operation_model.service_model.shape_for(value.code)
 
 
     def serialize_to_response(self, value, operation_model):

@@ -30,6 +30,7 @@ class ResourceNotFound(RDSError):
         super(ResourceNotFound, self).__init__(
             resource_id=resource_id, resource_type=resource_type
         )
+        self.code = self.__class__.__name__ + 'Fault'
 
 
 class DBInstanceNotFound(ResourceNotFound):
@@ -81,6 +82,7 @@ class ResourceAlreadyExists(RDSError):
         super(ResourceAlreadyExists, self).__init__(
             resource_id=resource_id, resource_type=resource_type
         )
+        self.code = self.__class__.__name__ + 'Fault'
 
 
 class DBInstanceAlreadyExists(ResourceAlreadyExists):
@@ -126,12 +128,12 @@ class InvalidDBClusterStateFault(RDSError):
         )
 
 
-class DBClusterToBeDeletedHasActiveMembers(RDSError):
+class DBClusterToBeDeletedHasActiveMembersFault(RDSError):
 
     fmt = "Cluster cannot be deleted, it still contains DB instances in non-deleting state."
 
 
-class InvalidDBInstanceState(RDSError):
+class InvalidDBInstanceStateFault(RDSError):
 
     fmt = "Instance {resource_id} is not {status_msg}."
 
@@ -141,7 +143,7 @@ class InvalidDBInstanceState(RDSError):
             if istate == "stop"
             else "stopped, it cannot be started"
         )
-        super(InvalidDBInstanceState, self).__init__(
+        super(InvalidDBInstanceStateFault, self).__init__(
             resource_id=database_identifier, status_msg=estate
         )
 
