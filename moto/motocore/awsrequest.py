@@ -1,19 +1,13 @@
+import six
 from botocore.awsrequest import HeadersDict
-from six.moves.urllib.parse import parse_qsl, urlparse
+from botocore.session import get_session
 from botocore.utils import EVENT_ALIASES as SERVICE_ALIASES
 from botocore.utils import get_encoding_from_headers
-from botocore.session import get_session
-import six
-import json
-from moto.motocore.regions import EndpointResolver
-from moto.motocore.client import get_custom_client
-from botocore.compat import unquote
-from botocore import xform_name
+from six.moves.urllib.parse import parse_qsl, urlparse
+from werkzeug.http import parse_options_header
 
-# put this in motocore.utils
-# SERVICE_ALIASES = {v: k for k, v in EVENT_ALIASES.items()}
-import boto3
-from werkzeug.http import parse_options_header, parse_authorization_header
+from moto.motocore.client import get_custom_client
+from moto.motocore.regions import EndpointResolver
 
 DEFAULT_ENCODING = "utf-8"
 
@@ -88,8 +82,6 @@ def get_protocol_from_headers(headers):
 
 
 def request_dict_to_parsed(request_dict):
-    from moto.motocore import client
-
     ctx = request_dict["context"]
     client = get_custom_client(
         ctx["service"], region_name=ctx["region"], api_version=ctx["api_version"],
@@ -130,7 +122,7 @@ def request_dict_to_parsed(request_dict):
                 service_name=client.meta.service_model.service_id.hyphenize(),
             )
         )
-    http_status_code = 200
+
     try:
         from moto.motocore.compat import inspect_getargspec
 
