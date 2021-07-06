@@ -81,6 +81,26 @@ def get_protocol_from_headers(headers):
     return protocol
 
 
+def get_default_result_key(shape):
+    # TODO: This is still a giant hack, but I needed to get this out of the serializer
+    # We have multiple option here:
+    # Add to default_result_key to metadata for output shapes (very time-consuming)
+    # Have the responses classes get the data from the backend and wrap with the
+    # appropriate key (hate to add all that boilerplate just for that
+    # Have the backend methods return the data wrapped in a key (don't like that,
+    # backend methods should be pure...
+    # Bleh... I don't know...
+    if shape is None:
+        return None
+    key = shape.metadata.get("default_result_key", "result")
+    possible_names = list(shape.members.keys())
+    if "Marker" in possible_names:
+        possible_names.remove("Marker")
+    if len(possible_names) == 1:
+        key = possible_names[0]
+    return key
+
+
 def request_dict_to_parsed(request_dict):
     ctx = request_dict["context"]
     client = get_custom_client(
@@ -126,6 +146,10 @@ def request_dict_to_parsed(request_dict):
     try:
         from moto.motocore.compat import inspect_getargspec
 
+        # TODO: I feel like we should check the response object first and call that
+        # method if it exists, otherwise call the backend method.
+        # This would allow the backend to just, say, return a list of objects and
+        # the response method to wrap in with the right key, e.g. DBClusters
         method = getattr(backend, backend_action)
         # TODO: Only pass parameters that match the call signature; pass all if kwargs is present.
         # param_spec = inspect.signature(method)
@@ -146,8 +170,12 @@ def request_dict_to_parsed(request_dict):
             result, marker = _paginate_response(result, params)
         else:
             marker = None
-        # This needs to be put under a more specific key (currently done in serializer)
-        result_dict = {"result": result}
+
+        if isinstance(result, dict):
+            result_dict = result
+        else:
+            result_key = get_default_result_key(operation_model.output_shape)
+            result_dict = {result_key: result}
         if marker:
             result_dict["marker"] = marker
 

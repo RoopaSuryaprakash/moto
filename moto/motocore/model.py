@@ -3,7 +3,7 @@
 from botocore.model import ServiceModel as BotocoreServiceModel
 from botocore.model import ShapeResolver as BotocoreShapeResolver
 
-MOTO_METADATA_ATTRS = ["default"]
+MOTO_METADATA_ATTRS = ["default", "default_result_key"]
 
 
 class ServiceModel(BotocoreServiceModel):

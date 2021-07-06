@@ -823,7 +823,6 @@ class XmlSerializer(DictSerializer):
                 "@xmlns": operation_model.metadata["xmlNamespace"],
                 "RequestId": serialized["headers"]["x-amzn-RequestId"],
             }
-
             output_shape = operation_model.output_shape
             key = None
             if output_shape is not None:
@@ -831,32 +830,6 @@ class XmlSerializer(DictSerializer):
                 if "resultWrapper" in output_shape.serialization:
                     start[output_shape.serialization["resultWrapper"]] = {}
                     start = start[output_shape.serialization["resultWrapper"]]
-                # I probably want to move this to some sort of helper that gets called
-                # a al the emit handlers/hooks in botocore to fix this before it even gets
-                # to the serializer.
-                # botocore.hooks:Event creating-client-class.rds: calling handler <function add_generate_presigned_url at 0x102a041e0>
-                if isinstance(value, dict) and "result" in value:
-                    result = value["result"]
-                    result_key = None
-                    for member_key, member in output_shape.members.items():
-                        if "name" in member.serialization:
-                            member_key = member.serialization["name"]
-                        if member.type_name == "structure" and isinstance(
-                            result, object
-                        ):
-                            result_key = xform_name(member_key)
-                            break
-                        elif member.type_name == "list" and isinstance(result, list):
-                            result_key = xform_name(member_key)
-                            break
-                        elif member.type_name == "string" and isinstance(result, str):
-                            result_key = xform_name(member_key)
-                            break
-                    if result_key:
-                        value[result_key] = value.pop("result")
-                    else:
-                        value = value["result"]
-
                 self._serialize(start, value, output_shape, key)
             serialized["body"] = response_body
             serialized["headers"]["vary"] = "accept-encoding"
