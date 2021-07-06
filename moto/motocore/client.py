@@ -1,7 +1,9 @@
+import functools
+
 import boto3
-from moto.motocore.handlers import CUSTOM_HANDLERS
-from botocore.hooks import first_non_none_response
 from botocore import handlers
+
+from moto.motocore.handlers import CUSTOM_HANDLERS
 
 
 class MyClass(object):
@@ -71,6 +73,7 @@ def add_custom_class(base_classes, **kwargs):
     base_classes.insert(0, MyClass)
 
 
+@functools.lru_cache(maxsize=None)
 def get_custom_client(service, **kwargs):
     session = boto3.Session()
     session.events.register("creating-client-class", add_custom_class)
