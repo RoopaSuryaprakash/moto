@@ -32,13 +32,14 @@ import datetime
 from xml.etree import ElementTree
 import xmltodict
 from botocore.compat import six
-
 from botocore.compat import json, formatdate
 from botocore.utils import parse_to_aware_datetime
 from botocore.utils import percent_encode
 from botocore.utils import is_json_value_header
 from botocore import xform_name
 from moto.core.utils import get_random_message_id
+from botocore.model import NoShapeFoundError
+
 
 # From the spec, the default timestamp format if not specified is iso8601.
 DEFAULT_TIMESTAMP_FORMAT = "iso8601"
@@ -53,7 +54,9 @@ def create_serializer(protocol_name):
 
 
 class Serializer(object):
-    DEFAULT_METHOD = "POST"
+    # DEFAULT_METHOD = "POST"
+    DEFAULT_RESPONSE_CODE = 200
+    DEFAULT_ERROR_RESPONSE_CODE = 500
     # Clients can change this to a different MutableMapping
     # (i.e OrderedDict) if they want.  This is used in the
     # compliance test to match the hash ordering used in the
@@ -100,9 +103,7 @@ class Serializer(object):
         # Creates a boilerplate default request dict that subclasses
         # can use as a starting point.
         serialized = {
-            "url_path": "/",
-            "query_string": "",
-            "method": self.DEFAULT_METHOD,
+            "status_code": self.DEFAULT_RESPONSE_CODE,
             "headers": {},
             # An empty body is represented as an empty byte string.
             "body": b"",
@@ -110,6 +111,9 @@ class Serializer(object):
         return serialized
 
     # Some extra utility methods subclasses can use.
+
+    def _is_error_result(self, result):
+        return isinstance(result, Exception)
 
     def _timestamp_iso8601(self, value):
         if value.microsecond > 0:
@@ -776,50 +780,54 @@ class DictSerializer(Serializer):
 
 
 class XmlSerializer(DictSerializer):
-
-    def _is_modeled_error_shape(self, value, operation_model):
-        shape_name = value.__class__.__name__
+    def _serialize_error(self, serialized, error, operation_model):
+        shape_name = getattr(error, "code", error.__class__.__name__)
         try:
-            return operation_model.service_model.shape_for(shape_name)
-        except Exception:
-            return operation_model.service_model.shape_for(value.code)
-
+            shape = operation_model.service_model.shape_for(shape_name)
+            error_code = shape.error_code
+            status_code = shape.metadata.get("error", {}).get(
+                "httpStatusCode", self.DEFAULT_ERROR_RESPONSE_CODE
+            )
+            sender_fault = shape.metadata.get("error", {}).get("senderFault", False)
+        except NoShapeFoundError:
+            error_code = error.__class__.__name__
+            status_code = self.DEFAULT_ERROR_RESPONSE_CODE
+            sender_fault = True
+        serialized["status_code"] = status_code
+        error_body = {
+            "ErrorResponse": {
+                "@xmlns": operation_model.metadata["xmlNamespace"],
+                "Error": {"Code": error_code, "Message": str(error),},
+                "RequestId": serialized["headers"]["x-amzn-RequestId"],
+            }
+        }
+        if sender_fault:
+            error_body["ErrorResponse"]["Error"]["Type"] = "Sender"
+        serialized["body"] = error_body
+        return serialized
 
     def serialize_to_response(self, value, operation_model):
+        serialized = self._create_default_response()
+        serialized["headers"] = {
+            "x-amzn-RequestId": get_random_message_id(),
+            "Content-Type": "text/xml",
+            "Date": datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
 
-        if isinstance(value.get('error'), Exception):
-            value = value.get('error')
-            error_shape = self._is_modeled_error_shape(value, operation_model)
-            if error_shape is not None:
-                metadata = error_shape.metadata.get('error', {})
-                root_key = "ErrorResponse"
-                serialized = {
-                    "ErrorResponse": {
-                        "@xmlns": operation_model.metadata["xmlNamespace"],
-                        "ResponseMetadata": {"RequestId": get_random_message_id()},
-                    }
-                }
-                start = serialized[root_key]
-                start["Error"] = {}
-                start = start["Error"]
-                if 'code' in metadata:
-                    start['Code']=metadata['code']
-                if metadata.get('senderFault', False):
-                    start['Type'] = 'Sender'
-                start['Message'] = str(value)
-                #self._serialize(start, value, error_shape, None)
+        if self._is_error_result(value):
+            serialized = self._serialize_error(serialized, value, operation_model)
         else:
+            response_body = self.MAP_TYPE()
             root_key = "{}Response".format(operation_model.name)
-            serialized = {
-                root_key: {
-                    "@xmlns": operation_model.metadata["xmlNamespace"],
-                    "RequestId": get_random_message_id(),
-                }
+            response_body[root_key] = {
+                "@xmlns": operation_model.metadata["xmlNamespace"],
+                "RequestId": serialized["headers"]["x-amzn-RequestId"],
             }
+
             output_shape = operation_model.output_shape
             key = None
             if output_shape is not None:
-                start = serialized[root_key]
+                start = response_body[root_key]
                 if "resultWrapper" in output_shape.serialization:
                     start[output_shape.serialization["resultWrapper"]] = {}
                     start = start[output_shape.serialization["resultWrapper"]]
@@ -848,35 +856,14 @@ class XmlSerializer(DictSerializer):
                         value[result_key] = value.pop("result")
                     else:
                         value = value["result"]
-                    # TODO: Figure out what this is doing because I think it's what we need!
-                    # key, output_shape = self._find_result_wrapped_shape(
-                    # output_shape,
-                    #         value)
-
-                    # if hasattr(output_shape, 'member'):
-                    #     start[key] = {}
-                    #     start = start[key]
-                    # key = output_shape.member.name
 
                 self._serialize(start, value, output_shape, key)
-        xml = xmltodict.unparse(
-            serialized, full_document=False
+            serialized["body"] = response_body
+            serialized["headers"]["vary"] = "accept-encoding"
+        serialized["body"] = xmltodict.unparse(
+            serialized["body"], full_document=False
         )  # pretty=true does newlines
-        return xml
-
-    def _serialize_exception(self, exc, operation_model):
-        serialized = {
-            "ErrorResponse": {
-                "@xmlns": operation_model.metadata["xmlNamespace"],
-                "Error": {
-                    "Code": getattr(exc, "code", "InternalError"),
-                    "Message": str(exc),
-                },
-                "RequestId": get_random_message_id(),
-            }
-        }
-        if getattr(exc, "sender_fault", False):
-            serialized["ErrorResponse"]["Error"]["Type"] = "Sender"
+        serialized["headers"]["Content-Length"] = len(serialized["body"])
         return serialized
 
     def _serialize_type_boolean(self, serialized, value, shape, key):

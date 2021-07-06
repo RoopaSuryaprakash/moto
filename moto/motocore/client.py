@@ -84,7 +84,9 @@ def get_custom_client(service, **kwargs):
 
     client._loader = Loader()
     model = client._loader.load_service_model(
-        client._service_model.service_name, "service-2", api_version=client._service_model.api_version
+        client._service_model.service_name,
+        "service-2",
+        api_version=client._service_model.api_version,
     )
     client.meta._service_model = ServiceModel(model)
 

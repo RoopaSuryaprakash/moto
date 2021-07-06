@@ -161,16 +161,15 @@ def request_dict_to_parsed(request_dict):
 
         client.test_result_dict(result_dict, operation_model)
 
-    except Exception as e:
-        result_dict = {"error": e}
-        http_status_code = getattr(e, "http_status_code", 400)
+    except Exception as e:  # TODO: catch on generic base AWSError or AWSException
+        result_dict = e
+
     from moto.motocore.serialize import create_serializer
 
     serializer = create_serializer(protocol)
-    serialized = serializer.serialize_to_response(result_dict, operation_model)
-    # TODO: serialize to response needs to do headers, body, and status code
-    resp_headers = {"status": http_status_code}
-    return http_status_code, resp_headers, serialized
+    response = serializer.serialize_to_response(result_dict, operation_model)
+
+    return response["status_code"], response["headers"], response["body"]
 
 
 # This was pulled from RDS3 but needs to generified and moved to its own module

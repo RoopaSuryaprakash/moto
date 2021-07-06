@@ -30,7 +30,7 @@ class ResourceNotFound(RDSError):
         super(ResourceNotFound, self).__init__(
             resource_id=resource_id, resource_type=resource_type
         )
-        self.code = self.__class__.__name__ + 'Fault'
+        self.code = self.__class__.__name__ + "Fault"
 
 
 class DBInstanceNotFound(ResourceNotFound):
@@ -82,7 +82,7 @@ class ResourceAlreadyExists(RDSError):
         super(ResourceAlreadyExists, self).__init__(
             resource_id=resource_id, resource_type=resource_type
         )
-        self.code = self.__class__.__name__ + 'Fault'
+        self.code = self.__class__.__name__ + "Fault"
 
 
 class DBInstanceAlreadyExists(ResourceAlreadyExists):
