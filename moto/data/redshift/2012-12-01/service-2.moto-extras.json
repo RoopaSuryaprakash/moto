@@ -42,6 +42,19 @@
           },
           "PreferredMaintenanceWindow": {
             "default": null
+          },
+          "DBName": {
+            "default": null
+          },
+          "ClusterType": {
+            "default": "multi-node"
+          }
+        }
+      },
+      "DeleteClusterMessage": {
+        "members": {
+          "SkipFinalClusterSnapshot": {
+            "default": false
           }
         }
       },
@@ -52,16 +65,13 @@
           }
         }
       },
-      "DescribeSnapshotCopyGrantsMessage":{
-
-      "members":{
-        "SnapshotCopyGrantName":{
-          "default":  null
+      "DescribeSnapshotCopyGrantsMessage": {
+        "members": {
+          "SnapshotCopyGrantName": {
+            "default": null
+          }
         }
-
       }
-
-    }
     }
   }
 }
