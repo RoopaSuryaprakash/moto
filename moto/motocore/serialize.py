@@ -56,7 +56,7 @@ def create_serializer(protocol_name):
 class Serializer(object):
     # DEFAULT_METHOD = "POST"
     DEFAULT_RESPONSE_CODE = 200
-    DEFAULT_ERROR_RESPONSE_CODE = 500
+    DEFAULT_ERROR_RESPONSE_CODE = 400
     # Clients can change this to a different MutableMapping
     # (i.e OrderedDict) if they want.  This is used in the
     # compliance test to match the hash ordering used in the
@@ -650,28 +650,65 @@ class DictSerializer(Serializer):
 
     TIMESTAMP_FORMAT = "iso8601"
 
-    def serialize_object(self, value, operation_model):
+    CONTENT_TYPE = "text"
 
-        serialized = {}
+    def _encode_body(self, body):
+        return body
 
-        output_shape = operation_model.output_shape
-        key = None
-        if output_shape is not None:
-            start = serialized
-            if "resultWrapper" in output_shape.serialization:
-                serialized[output_shape.serialization["resultWrapper"]] = {}
-                start = serialized[output_shape.serialization["resultWrapper"]]
-                # key, output_shape = self._find_result_wrapped_shape(
-                # output_shape,
-                #         value)
+    def _inject_response_metadata(self, serialized, operation_model):
+        pass
 
-                # if hasattr(output_shape, 'member'):
-                #     start[key] = {}
-                #     start = start[key]
-                # key = output_shape.member.name
+    def _serialize_error(self, serialized, error, operation_model):
+        shape_name = getattr(error, "code", error.__class__.__name__)
+        try:
+            shape = operation_model.service_model.shape_for(shape_name)
+            error_code = shape.error_code
+            status_code = shape.metadata.get("error", {}).get(
+                "httpStatusCode", self.DEFAULT_ERROR_RESPONSE_CODE
+            )
+            sender_fault = shape.metadata.get("error", {}).get("senderFault", False)
+        except NoShapeFoundError:
+            error_code = error.__class__.__name__
+            status_code = self.DEFAULT_ERROR_RESPONSE_CODE
+            sender_fault = True
+        serialized["status_code"] = status_code
+        error_body = {
+            "Error": {"Code": error_code, "Message": str(error),},
+            "RequestId": serialized["headers"]["x-amzn-RequestId"],
+        }
+        if sender_fault:
+            error_body["Error"]["Type"] = "Sender"
+        serialized["body"] = error_body
+        return serialized
 
-            self._serialize(start, value, output_shape, key)
-
+    def serialize_to_response(self, value, operation_model):
+        serialized = self._create_default_response()
+        serialized["headers"] = {
+            "x-amzn-RequestId": get_random_message_id(),
+            "Content-Type": self.CONTENT_TYPE,
+            "Date": datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
+        }
+        if self._is_error_result(value):
+            serialized = self._serialize_error(serialized, value, operation_model)
+        else:
+            response_body = self.MAP_TYPE()
+            root_key = "{}Response".format(operation_model.name)
+            response_body[root_key] = {
+                "RequestId": serialized["headers"]["x-amzn-RequestId"],
+            }
+            self._inject_response_metadata(response_body[root_key], operation_model)
+            output_shape = operation_model.output_shape
+            key = None
+            if output_shape is not None:
+                start = response_body[root_key]
+                if "resultWrapper" in output_shape.serialization:
+                    start[output_shape.serialization["resultWrapper"]] = {}
+                    start = start[output_shape.serialization["resultWrapper"]]
+                self._serialize(start, value, output_shape, key)
+            serialized["body"] = response_body
+            serialized["headers"]["vary"] = "accept-encoding"
+        serialized["body"] = self._encode_body(serialized["body"])
+        serialized["headers"]["Content-Length"] = len(serialized["body"])
         return serialized
 
     def _find_result_wrapped_shape(self, shape, value):
@@ -779,78 +816,89 @@ class DictSerializer(Serializer):
         return shape.serialization.get("name", default_name)
 
 
-class XmlSerializer(DictSerializer):
+class QuerySerializer(DictSerializer):
+
+    CONTENT_TYPE = "text/xml"
+
+    def _encode_body(self, body):
+        body_encoded = xmltodict.unparse(
+            body, full_document=False
+        )  # pretty=true does newlines
+        return body_encoded
+
     def _serialize_error(self, serialized, error, operation_model):
-        shape_name = getattr(error, "code", error.__class__.__name__)
-        try:
-            shape = operation_model.service_model.shape_for(shape_name)
-            error_code = shape.error_code
-            status_code = shape.metadata.get("error", {}).get(
-                "httpStatusCode", self.DEFAULT_ERROR_RESPONSE_CODE
-            )
-            sender_fault = shape.metadata.get("error", {}).get("senderFault", False)
-        except NoShapeFoundError:
-            error_code = error.__class__.__name__
-            status_code = self.DEFAULT_ERROR_RESPONSE_CODE
-            sender_fault = True
-        serialized["status_code"] = status_code
-        error_body = {
-            "ErrorResponse": {
-                "@xmlns": operation_model.metadata["xmlNamespace"],
-                "Error": {"Code": error_code, "Message": str(error),},
-                "RequestId": serialized["headers"]["x-amzn-RequestId"],
-            }
-        }
-        if sender_fault:
-            error_body["ErrorResponse"]["Error"]["Type"] = "Sender"
+        serialized = super(QuerySerializer, self)._serialize_error(
+            serialized, error, operation_model
+        )
+        # Add XML wrapper and metadata
+        error_body = {"ErrorResponse": dict(serialized["body"])}
+        error_body["ErrorResponse"]["@xmlns"] = operation_model.metadata["xmlNamespace"]
         serialized["body"] = error_body
         return serialized
 
-    def serialize_to_response(self, value, operation_model):
-        serialized = self._create_default_response()
-        serialized["headers"] = {
-            "x-amzn-RequestId": get_random_message_id(),
-            "Content-Type": "text/xml",
-            "Date": datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
-        }
+    def _inject_response_metadata(self, serialized, operation_model):
+        serialized["@xmlns"] = operation_model.metadata["xmlNamespace"]
 
-        if self._is_error_result(value):
-            serialized = self._serialize_error(serialized, value, operation_model)
-        else:
-            response_body = self.MAP_TYPE()
-            root_key = "{}Response".format(operation_model.name)
-            response_body[root_key] = {
-                "@xmlns": operation_model.metadata["xmlNamespace"],
-                "RequestId": serialized["headers"]["x-amzn-RequestId"],
-            }
-            output_shape = operation_model.output_shape
-            key = None
-            if output_shape is not None:
-                start = response_body[root_key]
-                if "resultWrapper" in output_shape.serialization:
-                    start[output_shape.serialization["resultWrapper"]] = {}
-                    start = start[output_shape.serialization["resultWrapper"]]
-                self._serialize(start, value, output_shape, key)
-            serialized["body"] = response_body
-            serialized["headers"]["vary"] = "accept-encoding"
-        serialized["body"] = xmltodict.unparse(
-            serialized["body"], full_document=False
-        )  # pretty=true does newlines
-        serialized["headers"]["Content-Length"] = len(serialized["body"])
-        return serialized
+    # def serialize_to_response(self, value, operation_model):
+    #     serialized = self._create_default_response()
+    #     serialized["headers"] = {
+    #         "x-amzn-RequestId": get_random_message_id(),
+    #         "Content-Type": self.CONTENT_TYPE,
+    #         "Date": datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT"),
+    #     }
+    #
+    #     if self._is_error_result(value):
+    #         serialized = self._serialize_error(serialized, value, operation_model)
+    #     else:
+    #         response_body = self.MAP_TYPE()
+    #         root_key = "{}Response".format(operation_model.name)
+    #         response_body[root_key] = {
+    #             "@xmlns": operation_model.metadata["xmlNamespace"],
+    #             "RequestId": serialized["headers"]["x-amzn-RequestId"],
+    #         }
+    #         output_shape = operation_model.output_shape
+    #         key = None
+    #         if output_shape is not None:
+    #             start = response_body[root_key]
+    #             if "resultWrapper" in output_shape.serialization:
+    #                 start[output_shape.serialization["resultWrapper"]] = {}
+    #                 start = start[output_shape.serialization["resultWrapper"]]
+    #             self._serialize(start, value, output_shape, key)
+    #         serialized["body"] = response_body
+    #         serialized["headers"]["vary"] = "accept-encoding"
+    #     serialized["body"] = self._encode_body(serialized['body'])
+    #     serialized["headers"]["Content-Length"] = len(serialized["body"])
+    #     return serialized
+    #
+    # def _serialize_type_boolean(self, serialized, value, shape, key):
+    #     serialized[key] = str(value).lower()
+
+
+class QueryJSONSerializer(DictSerializer):
+
+    CONTENT_TYPE = "application/json"
 
     def _serialize_type_boolean(self, serialized, value, shape, key):
-        serialized[key] = str(value).lower()
+        serialized[key] = True if value else False
 
+    def _serialize_type_list(self, serialized, value, shape, key):
+        list_obj = []
+        serialized[key] = list_obj
+        for list_item in value:
+            wrapper = {}
+            # The JSON list serialization is the only case where we aren't
+            # setting a key on a dict.  We handle this by using
+            # a __current__ key on a wrapper dict to serialize each
+            # list item before appending it to the serialized list.
+            self._serialize(wrapper, list_item, shape.member, "__current__")
+            list_obj.append(wrapper["__current__"])
 
-class QuerySerializer(XmlSerializer):
-    pass
+    def _encode_body(self, body):
+        body_encoded = json.dumps(body).encode(self.DEFAULT_ENCODING)
+        return body_encoded
 
 
 class JSONSerializer(DictSerializer):
-    def _serialize_exception(self, value, operation_model):
-        return {}
-
     def _serialize_type_list(self, serialized, value, shape, key):
         list_obj = []
         serialized[key] = list_obj
@@ -922,6 +970,7 @@ class RestJSONSerializer(JSONSerializer):
 
 SERIALIZERS = {
     "query": QuerySerializer,
+    "query-json": QueryJSONSerializer,
     "json": JSONSerializer,
     "rest-json": RestJSONSerializer,
 }
