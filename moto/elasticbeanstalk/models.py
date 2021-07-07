@@ -7,7 +7,7 @@ from .exceptions import InvalidParameterValueError, ResourceNotFoundException
 from .utils import make_arn
 
 
-class FakeEnvironment(BaseModel):
+class Environment(BaseModel):
     def __init__(
         self, application, environment_name, solution_stack_name, tags,
     ):
@@ -36,7 +36,7 @@ class FakeEnvironment(BaseModel):
         return self.application.region
 
 
-class FakeApplication(BaseModel):
+class Application(BaseModel):
     def __init__(self, backend, application_name):
         self.backend = weakref.proxy(backend)  # weakref to break cycles
         self.application_name = application_name
@@ -48,7 +48,7 @@ class FakeApplication(BaseModel):
         if environment_name in self.environments:
             raise InvalidParameterValueError
 
-        env = FakeEnvironment(
+        env = Environment(
             application=self,
             environment_name=environment_name,
             solution_stack_name=solution_stack_name,
@@ -93,11 +93,23 @@ class EBBackend(BaseBackend):
             raise InvalidParameterValueError(
                 "Application {} already exists.".format(application_name)
             )
-        new_app = FakeApplication(backend=self, application_name=application_name,)
+        new_app = Application(backend=self, application_name=application_name,)
         self.applications[application_name] = new_app
         return new_app
 
-    def create_environment(self, app, environment_name, stack_name, tags):
+    def describe_applications(self):
+        return self.applications.values()
+
+    def create_environment(
+        self, application_name, environment_name=None, stack_name=None, tags=None
+    ):
+        try:
+            app = self.applications[application_name]
+        except KeyError:
+            raise InvalidParameterValueError(
+                "No Application named '{}' found.".format(application_name)
+            )
+
         return app.create_environment(
             environment_name=environment_name,
             solution_stack_name=stack_name,
@@ -123,11 +135,17 @@ class EBBackend(BaseBackend):
                 "Resource not found for ARN '{}'.".format(resource_arn)
             )
 
-        for key, value in tags_to_add.items():
-            res.tags[key] = value
+        for tag in tags_to_add:
+            existing_tag = next((t for t in res.tags if t["key"] == tag["key"]), None)
+            if existing_tag is None:
+                res.tags.append(tag)
+            else:
+                existing_tag["value"] = tag["value"]
 
         for key in tags_to_remove:
-            del res.tags[key]
+            existing_tag = next((t for t in res.tags if t["key"] == key), None)
+            if existing_tag is not None:
+                res.tags.remove(existing_tag)
 
     def list_tags_for_resource(self, resource_arn):
         try:
@@ -136,7 +154,7 @@ class EBBackend(BaseBackend):
             raise ResourceNotFoundException(
                 "Resource not found for ARN '{}'.".format(resource_arn)
             )
-        return res.tags
+        return {"ResourceArn": resource_arn, "ResourceTags": res.tags}
 
     def _find_environment_by_arn(self, arn):
         for app in self.applications.keys():

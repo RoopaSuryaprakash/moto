@@ -5,6 +5,12 @@ from .exceptions import InvalidParameterValueError
 
 
 class EBResponse(BaseResponse):
+    @classmethod
+    def dispatch(cls, *args, **kwargs):
+        from moto.motocore.awsrequest import convert_to_request_dict
+
+        return convert_to_request_dict(*args)
+
     @property
     def backend(self):
         """

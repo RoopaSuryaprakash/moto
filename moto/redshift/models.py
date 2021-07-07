@@ -139,9 +139,9 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
             self.cluster_parameter_group_name = ["default.redshift-1.0"]
 
         if cluster_security_groups:
-            self.cluster_security_groups = cluster_security_groups
+            self._cluster_security_groups = cluster_security_groups
         else:
-            self.cluster_security_groups = ["Default"]
+            self._cluster_security_groups = ["Default"]
 
         if availability_zone:
             self.availability_zone = availability_zone
@@ -226,7 +226,7 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
         raise UnformattedGetAttTemplateException()
 
     @property
-    def endpoint(self):
+    def address(self):
         return "{0}.cg034hpkmmjt.{1}.redshift.amazonaws.com".format(
             self.cluster_identifier, self.region
         )
@@ -237,15 +237,46 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
             security_group
             for security_group in self.redshift_backend.describe_cluster_security_groups()
             if security_group.cluster_security_group_name
-            in self.cluster_security_groups
+            in self._cluster_security_groups
+        ]
+
+    @property
+    def cluster_security_groups(self):
+        return [
+            {
+                "Status": "active",
+                "ClusterSecurityGroupName": group.cluster_security_group_name,
+            }
+            for group in self.security_groups
+        ]
+
+    @property
+    def cluster_parameter_groups(self):
+        return [
+            {
+                "ParameterApplyStatus": "in-sync",
+                "ParameterGroupName": group.cluster_parameter_group_name,
+            }
+            for group in self.parameter_groups
+        ]
+
+    @property
+    def endpoint(self):
+        return {"Address": self.address, "Port": self.port}
+
+    @property
+    def _vpc_security_groups(self):
+        return [
+            security_group
+            for security_group in self.redshift_backend.ec2_backend.describe_security_groups()
+            if security_group.id in self.vpc_security_group_ids
         ]
 
     @property
     def vpc_security_groups(self):
         return [
-            security_group
-            for security_group in self.redshift_backend.ec2_backend.describe_security_groups()
-            if security_group.id in self.vpc_security_group_ids
+            {"Status": "active", "VpcSecurityGroupId": group.id}
+            for group in self._vpc_security_groups
         ]
 
     @property
@@ -255,6 +286,13 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
             for parameter_group in self.redshift_backend.describe_cluster_parameter_groups()
             if parameter_group.cluster_parameter_group_name
             in self.cluster_parameter_group_name
+        ]
+
+    @property
+    def iam_roles(self):
+        return [
+            {"ApplyStatus": "in-sync", "IamRoleArn": iam_role_arn}
+            for iam_role_arn in self.iam_roles_arn
         ]
 
     @property
@@ -268,7 +306,7 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
             "ClusterVersion": self.cluster_version,
             "VpcSecurityGroups": [
                 {"Status": "active", "VpcSecurityGroupId": group.id}
-                for group in self.vpc_security_groups
+                for group in self._vpc_security_groups
             ],
             "ClusterSubnetGroupName": self.cluster_subnet_group_name,
             "AvailabilityZone": self.availability_zone,
@@ -297,7 +335,7 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
             "NodeType": self.node_type,
             "ClusterIdentifier": self.cluster_identifier,
             "AllowVersionUpgrade": self.allow_version_upgrade,
-            "Endpoint": {"Address": self.endpoint, "Port": self.port},
+            "Endpoint": {"Address": self.address, "Port": self.port},
             "ClusterCreateTime": self.create_time,
             "PendingModifiedValues": [],
             "Tags": self.tags,
@@ -359,8 +397,19 @@ class SubnetGroup(TaggableResourceMixin, CloudFormationModel):
         self.cluster_subnet_group_name = cluster_subnet_group_name
         self.description = description
         self.subnet_ids = subnet_ids
-        if not self.subnets:
+        if not self._subnets:
             raise InvalidSubnetError(subnet_ids)
+
+    @property
+    def subnets(self):
+        return [
+            {
+                "SubnetStatus": "Active",
+                "SubnetIdentifier": subnet.id,
+                "SubnetAvailabilityZone": {"Name": subnet.availability_zone},
+            }
+            for subnet in self._subnets
+        ]
 
     @staticmethod
     def cloudformation_name_type():
@@ -387,7 +436,7 @@ class SubnetGroup(TaggableResourceMixin, CloudFormationModel):
         return subnet_group
 
     @property
-    def subnets(self):
+    def _subnets(self):
         return self.ec2_backend.get_all_subnets(filters={"subnet-id": self.subnet_ids})
 
     @property
@@ -410,7 +459,7 @@ class SubnetGroup(TaggableResourceMixin, CloudFormationModel):
                     "SubnetIdentifier": subnet.id,
                     "SubnetAvailabilityZone": {"Name": subnet.availability_zone},
                 }
-                for subnet in self.subnets
+                for subnet in self._subnets
             ],
             "Tags": self.tags,
         }
@@ -665,8 +714,10 @@ class RedshiftBackend(BaseBackend):
                 )
 
         cluster = self.describe_clusters(cluster_identifier)[0]
-
+        protected_attrs = ["cluster_security_groups"]
         for key, value in cluster_kwargs.items():
+            if key in protected_attrs:
+                key = "_" + key
             setattr(cluster, key, value)
 
         if new_cluster_identifier:
@@ -684,7 +735,7 @@ class RedshiftBackend(BaseBackend):
     def delete_cluster(self, **cluster_kwargs):
         cluster_identifier = cluster_kwargs.pop("cluster_identifier")
         cluster_skip_final_snapshot = cluster_kwargs.pop("skip_final_snapshot")
-        cluster_snapshot_identifer = cluster_kwargs.pop(
+        cluster_snapshot_identifer = cluster_kwargs.get(
             "final_cluster_snapshot_identifier"
         )
 

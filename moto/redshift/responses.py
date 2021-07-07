@@ -45,6 +45,12 @@ def itemize(data):
 
 
 class RedshiftResponse(BaseResponse):
+    @classmethod
+    def dispatch(cls, *args, **kwargs):
+        from moto.motocore.awsrequest import convert_to_request_dict
+
+        return convert_to_request_dict(*args)
+
     @property
     def redshift_backend(self):
         return redshift_backends[self.region]
