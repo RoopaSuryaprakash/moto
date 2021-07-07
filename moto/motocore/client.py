@@ -2,7 +2,7 @@ import functools
 
 import boto3
 from botocore import handlers
-
+from botocore.hooks import first_non_none_response
 from moto.motocore.handlers import CUSTOM_HANDLERS
 
 
@@ -42,8 +42,7 @@ class MyClass(object):
 
     def test_result_dict(self, result_dict, operation_model):
         service_id = self.meta.service_model.service_id.hyphenize()
-        # responses =
-        self.meta.events.emit(
+        responses = self.meta.events.emit(
             "before-result-serialization.{service_id}.{operation_name}".format(
                 service_id=service_id, operation_name=operation_model.name
             ),
@@ -51,8 +50,8 @@ class MyClass(object):
             operation_model=operation_model,
         )
 
-        # api_params = first_non_none_response(responses, default=request_dict)
-        # return api_params
+        new_result = first_non_none_response(responses, default=result_dict)
+        return new_result
 
     def test_after_result(self, result, operation_model):
         service_id = self.meta.service_model.service_id.hyphenize()
