@@ -1,11 +1,13 @@
+import functools
+
 import six
 from botocore.awsrequest import HeadersDict
 from botocore.session import get_session
-from botocore.utils import EVENT_ALIASES as SERVICE_ALIASES
 from botocore.utils import get_encoding_from_headers
 from six.moves.urllib.parse import parse_qsl, urlparse
 from werkzeug.http import parse_options_header
 
+from moto.core.utils import get_random_message_id
 from moto.motocore.client import get_custom_client
 from moto.motocore.regions import EndpointResolver
 
@@ -20,7 +22,7 @@ def convert_to_request_dict(request, full_url, headers):
         "query_string": parsed.query,  # getattr(request, 'query_string', ''),
         "method": getattr(request, "method", "GET"),
         "headers": getattr(request, "headers", headers),
-        "body": getattr(request, "body", None),
+        "body": getattr(request, "body", b""),
         "url": getattr(request, "url", full_url),
     }
     normalize_request_dict(request_dict)
@@ -54,20 +56,27 @@ def aws_context_from_headers(headers):
             return {"region": region, "service": service}
 
 
+@functools.lru_cache(maxsize=None)
+def get_endpoint_data():
+    session = get_session()
+    loader = session.get_component("data_loader")
+    endpoint_data = loader.load_data("endpoints")
+    return endpoint_data
+
+
 def aws_context_from_request(req):
     ctx = {"api_version": None}
     auth_ctx = aws_context_from_headers(req["headers"])
     if auth_ctx:
         ctx.update(**auth_ctx)
-    session = get_session()
-    loader = session.get_component("data_loader")
-    endpoint_data = loader.load_data("endpoints")
+    endpoint_data = get_endpoint_data()
     deconstructor = EndpointResolver(endpoint_data)
     result = deconstructor.deconstruct_endpoint(req["hostname"])
     ctx.update(**result)
     if isinstance(req["body"], dict):
         ctx["api_version"] = req["body"].get("Version")
-    ctx["service"] = SERVICE_ALIASES.get(ctx["service"], ctx["service"])
+    # TODO: I don't know if we need this... or maybe we need the inverse...
+    # ctx["service"] = SERVICE_ALIASES.get(ctx["service"], ctx["service"])
     return ctx
 
 
@@ -94,8 +103,9 @@ def get_default_result_key(shape):
         return None
     key = shape.metadata.get("default_result_key", "result")
     possible_names = list(shape.members.keys())
-    if "Marker" in possible_names:
-        possible_names.remove("Marker")
+    for token_field in ["Marker", "NextToken"]:
+        if token_field in possible_names:
+            possible_names.remove(token_field)
     if len(possible_names) == 1:
         key = possible_names[0]
     return key
@@ -103,6 +113,8 @@ def get_default_result_key(shape):
 
 def request_dict_to_parsed(request_dict):
     ctx = request_dict["context"]
+    # TODO: Not sure when/where to generate this
+    ctx["request_id"] = get_random_message_id()
     client = get_custom_client(
         ctx["service"], region_name=ctx["region"], api_version=ctx["api_version"],
     )
@@ -179,20 +191,25 @@ def request_dict_to_parsed(request_dict):
         if marker:
             result_dict["marker"] = marker
 
-        client.test_result_dict(result_dict, operation_model)
+        new_result = client.test_result_dict(result_dict, operation_model)
+        if new_result is not None:
+            result_dict = new_result
 
     except Exception as e:  # TODO: catch on generic base AWSError or AWSException
         result_dict = e
 
     from moto.motocore.serialize import create_serializer
 
+    # TODO: Fix this HACK
+    if "ContentType" in request_dict["body"]:
+        protocol = "{}-{}".format(protocol, request_dict["body"]["ContentType"].lower())
     serializer = create_serializer(protocol)
     response = serializer.serialize_to_response(result_dict, operation_model)
 
     return response["status_code"], response["headers"], response["body"]
 
 
-# This was pulled from RDS3 but needs to generified and moved to its own module
+# This was pulled from RDS3 but needs to be generified and moved to its own module
 MAX_RECORDS = 100
 
 
