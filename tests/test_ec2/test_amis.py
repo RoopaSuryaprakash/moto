@@ -145,7 +145,8 @@ def test_ami_create_and_delete_boto3():
         instance["VirtualizationType"]
     )
     retrieved_image.should.have.key("Architecture").equal(instance["Architecture"])
-    retrieved_image.should.have.key("KernelId").equal(instance["KernelId"])
+    # We don't serialize None values
+    # retrieved_image.should.have.key("KernelId").equal(instance["KernelId"])
     retrieved_image.should.have.key("Platform").equal(instance["Platform"])
     retrieved_image.should.have.key("CreationDate")
     ec2.terminate_instances(InstanceIds=[instance_id])
@@ -343,7 +344,8 @@ def test_ami_copy_boto3():
     copy_image["ImageId"].should.equal(copy_image_id)
     copy_image["VirtualizationType"].should.equal(source_image["VirtualizationType"])
     copy_image["Architecture"].should.equal(source_image["Architecture"])
-    copy_image["KernelId"].should.equal(source_image["KernelId"])
+    # We don't serialize None values
+    # copy_image["KernelId"].should.equal(source_image["KernelId"])
     copy_image["Platform"].should.equal(source_image["Platform"])
 
     # Validate auto-created snapshot

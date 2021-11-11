@@ -104,6 +104,7 @@ class Serializer(object):
         # can use as a starting point.
         serialized = {
             "status_code": self.DEFAULT_RESPONSE_CODE,
+            "status": self.DEFAULT_RESPONSE_CODE,
             "headers": {},
             # An empty body is represented as an empty byte string.
             "body": b"",
