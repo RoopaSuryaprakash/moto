@@ -1,6 +1,6 @@
+import copy
 import os
 import boto3
-import botocore
 from botocore.exceptions import ClientError
 import pytest
 import sure  # noqa # pylint: disable=unused-import
@@ -19,7 +19,7 @@ def test_create_load_balancer():
     lb = response.get("LoadBalancers")[0]
     lb.get("DNSName").should.equal("my-lb-1.us-east-1.elb.amazonaws.com")
     lb.get("LoadBalancerArn").should.equal(
-        "arn:aws:elasticloadbalancing:us-east-1:1:loadbalancer/my-lb/50dc6c495c0c9188"
+        f"arn:aws:elasticloadbalancing:us-east-1:{ACCOUNT_ID}:loadbalancer/app/my-lb/50dc6c495c0c9188"
     )
     lb.get("SecurityGroups").should.equal([security_group.id])
     lb.get("AvailabilityZones").should.equal(
@@ -30,10 +30,12 @@ def test_create_load_balancer():
     )
     lb.get("CreatedTime").tzinfo.should_not.be.none
     lb.get("State").get("Code").should.equal("provisioning")
+    lb_arn = lb.get("LoadBalancerArn")
 
     # Ensure the tags persisted
-    response = conn.describe_tags(ResourceArns=[lb.get("LoadBalancerArn")])
-    tags = {d["Key"]: d["Value"] for d in response["TagDescriptions"][0]["Tags"]}
+    tag_desc = conn.describe_tags(ResourceArns=[lb_arn])["TagDescriptions"][0]
+    tag_desc.should.have.key("ResourceArn").equals(lb_arn)
+    tags = {d["Key"]: d["Value"] for d in tag_desc["Tags"]}
     tags.should.equal({"key_name": "a_value"})
 
 
@@ -64,6 +66,42 @@ def create_load_balancer():
 
 @mock_elbv2
 @mock_ec2
+def test_create_elb_using_subnetmapping():
+    region = "us-west-1"
+    conn = boto3.client("elbv2", region_name=region)
+    ec2 = boto3.resource("ec2", region_name=region)
+
+    security_group = ec2.create_security_group(
+        GroupName="a-security-group", Description="First One"
+    )
+    vpc = ec2.create_vpc(CidrBlock="172.28.7.0/24", InstanceTenancy="default")
+    subnet1 = ec2.create_subnet(
+        VpcId=vpc.id, CidrBlock="172.28.7.0/26", AvailabilityZone=region + "a"
+    )
+    subnet2 = ec2.create_subnet(
+        VpcId=vpc.id, CidrBlock="172.28.7.192/26", AvailabilityZone=region + "b"
+    )
+
+    conn.create_load_balancer(
+        Name="my-lb",
+        SubnetMappings=[{"SubnetId": subnet1.id}, {"SubnetId": subnet2.id}],
+        SecurityGroups=[security_group.id],
+        Scheme="internal",
+        Tags=[{"Key": "key_name", "Value": "a_value"}],
+    )
+
+    lb = conn.describe_load_balancers()["LoadBalancers"][0]
+    lb.should.have.key("AvailabilityZones").length_of(2)
+    lb["AvailabilityZones"].should.contain(
+        {"ZoneName": "us-west-1a", "SubnetId": subnet1.id}
+    )
+    lb["AvailabilityZones"].should.contain(
+        {"ZoneName": "us-west-1b", "SubnetId": subnet2.id}
+    )
+
+
+@mock_elbv2
+@mock_ec2
 def test_describe_load_balancers():
     response, _, _, _, _, conn = create_load_balancer()
 
@@ -86,6 +124,20 @@ def test_describe_load_balancers():
         conn.describe_load_balancers(LoadBalancerArns=["not-a/real/arn"])
     with pytest.raises(ClientError):
         conn.describe_load_balancers(Names=["nope"])
+
+
+@mock_elbv2
+@mock_ec2
+def test_describe_listeners():
+    conn = boto3.client("elbv2", region_name="us-east-1")
+
+    with pytest.raises(ClientError) as exc:
+        conn.describe_listeners()
+    err = exc.value.response["Error"]
+    err["Code"].should.equal("ValidationError")
+    err["Message"].should.equal(
+        "You must specify either listener ARNs or a load balancer ARN"
+    )
 
 
 @mock_elbv2
@@ -127,9 +179,12 @@ def test_add_remove_tags():
         ],
     )
 
-    conn.add_tags.when.called_with(
-        ResourceArns=[lb.get("LoadBalancerArn")], Tags=[{"Key": "k", "Value": "b"}]
-    ).should.throw(botocore.exceptions.ClientError)
+    with pytest.raises(ClientError) as exc:
+        conn.add_tags(
+            ResourceArns=[lb.get("LoadBalancerArn")], Tags=[{"Key": "k", "Value": "b"}]
+        )
+    err = exc.value.response["Error"]
+    err["Code"].should.equal("TooManyTagsError")
 
     conn.add_tags(
         ResourceArns=[lb.get("LoadBalancerArn")], Tags=[{"Key": "j", "Value": "c"}]
@@ -257,7 +312,7 @@ def test_create_rule_forward_config_as_second_arg():
     load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
 
     response = elbv2.create_listener(
-        LoadBalancerArn=load_balancer_arn, Protocol="HTTP", Port=80, DefaultActions=[],
+        LoadBalancerArn=load_balancer_arn, Protocol="HTTP", Port=80, DefaultActions=[]
     )
     http_listener_arn = response.get("Listeners")[0]["ListenerArn"]
 
@@ -280,7 +335,7 @@ def test_create_rule_forward_config_as_second_arg():
     elbv2.create_rule(
         ListenerArn=http_listener_arn,
         Conditions=[
-            {"Field": "path-pattern", "PathPatternConfig": {"Values": [f"/sth*",]},},
+            {"Field": "path-pattern", "PathPatternConfig": {"Values": ["/sth*"]}}
         ],
         Priority=priority,
         Actions=[
@@ -304,7 +359,7 @@ def test_create_rule_forward_config_as_second_arg():
                     "TargetGroups": [
                         {"TargetGroupArn": target_group_arn, "Weight": 1},
                     ],
-                    "TargetGroupStickinessConfig": {"Enabled": False,},
+                    "TargetGroupStickinessConfig": {"Enabled": False},
                 },
             },
         ],
@@ -316,9 +371,11 @@ def test_create_rule_forward_config_as_second_arg():
     forward_action.should.equal(
         {
             "ForwardConfig": {
-                "TargetGroups": [{"TargetGroupArn": target_group_arn, "Weight": 1}]
+                "TargetGroups": [{"TargetGroupArn": target_group_arn, "Weight": 1}],
+                "TargetGroupStickinessConfig": {"Enabled": False},
             },
             "Type": "forward",
+            "Order": 2,
         }
     )
 
@@ -613,23 +670,78 @@ def test_create_rule_priority_in_use():
     load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
 
     response = elbv2.create_listener(
-        LoadBalancerArn=load_balancer_arn, Protocol="HTTP", Port=80, DefaultActions=[],
+        LoadBalancerArn=load_balancer_arn, Protocol="HTTP", Port=80, DefaultActions=[]
     )
     http_listener_arn = response.get("Listeners")[0]["ListenerArn"]
 
     priority = 100
     elbv2.create_rule(
-        ListenerArn=http_listener_arn, Priority=priority, Conditions=[], Actions=[],
+        ListenerArn=http_listener_arn, Priority=priority, Conditions=[], Actions=[]
     )
 
     # test for PriorityInUse
     with pytest.raises(ClientError) as ex:
         elbv2.create_rule(
-            ListenerArn=http_listener_arn, Priority=priority, Conditions=[], Actions=[],
+            ListenerArn=http_listener_arn, Priority=priority, Conditions=[], Actions=[]
         )
     err = ex.value.response["Error"]
     err["Code"].should.equal("PriorityInUse")
     err["Message"].should.equal("The specified priority is in use.")
+
+
+@mock_elbv2
+@mock_ec2
+def test_modify_rule_conditions():
+    response, _, _, _, _, elbv2 = create_load_balancer()
+    load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
+
+    action = {
+        "Type": "redirect",
+        "RedirectConfig": {
+            "Protocol": "HTTPS",
+            "Port": "443",
+            "StatusCode": "HTTP_301",
+        },
+    }
+    condition = {"Field": "path-pattern", "PathPatternConfig": {"Values": ["/sth*"]}}
+
+    response = elbv2.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol="HTTP",
+        Port=80,
+        DefaultActions=[action],
+    )
+    http_listener_arn = response.get("Listeners")[0]["ListenerArn"]
+
+    response = elbv2.create_rule(
+        ListenerArn=http_listener_arn, Priority=100, Conditions=[], Actions=[]
+    )
+    rule = response["Rules"][0]
+
+    assert len(rule["Actions"]) == 0
+    assert len(rule["Conditions"]) == 0
+
+    response = elbv2.modify_rule(RuleArn=rule["RuleArn"], Actions=[action])
+    rule = response["Rules"][0]
+
+    assert len(rule["Actions"]) == 1
+    assert len(rule["Conditions"]) == 0
+
+    response = elbv2.modify_rule(RuleArn=rule["RuleArn"], Conditions=[condition])
+    rule = response["Rules"][0]
+
+    assert len(rule["Actions"]) == 1
+    assert len(rule["Conditions"]) == 1
+
+    response = elbv2.modify_rule(
+        RuleArn=rule["RuleArn"],
+        Conditions=[condition, condition],
+        Actions=[action, action],
+    )
+    rule = response["Rules"][0]
+
+    assert len(rule["Actions"]) == 2
+    assert len(rule["Conditions"]) == 2
 
 
 @mock_elbv2
@@ -861,7 +973,7 @@ def test_handle_listener_rules():
             },
         ],
         Actions=[
-            {"TargetGroupArn": target_group.get("TargetGroupArn"), "Type": "forward",}
+            {"TargetGroupArn": target_group.get("TargetGroupArn"), "Type": "forward"}
         ],
     )
 
@@ -996,7 +1108,7 @@ def test_describe_ssl_policies():
     len(resp["SslPolicies"]).should.equal(6)
 
     resp = client.describe_ssl_policies(
-        Names=["ELBSecurityPolicy-TLS-1-2-2017-01", "ELBSecurityPolicy-2016-08",]
+        Names=["ELBSecurityPolicy-TLS-1-2-2017-01", "ELBSecurityPolicy-2016-08"]
     )
     len(resp["SslPolicies"]).should.equal(2)
 
@@ -1075,57 +1187,6 @@ def test_set_security_groups():
 
 @mock_elbv2
 @mock_ec2
-def test_set_subnets_errors():
-    client = boto3.client("elbv2", region_name="us-east-1")
-    ec2 = boto3.resource("ec2", region_name="us-east-1")
-
-    security_group = ec2.create_security_group(
-        GroupName="a-security-group", Description="First One"
-    )
-    vpc = ec2.create_vpc(CidrBlock="172.28.7.0/24", InstanceTenancy="default")
-    subnet1 = ec2.create_subnet(
-        VpcId=vpc.id, CidrBlock="172.28.7.0/26", AvailabilityZone="us-east-1a"
-    )
-    subnet2 = ec2.create_subnet(
-        VpcId=vpc.id, CidrBlock="172.28.7.64/26", AvailabilityZone="us-east-1b"
-    )
-    subnet3 = ec2.create_subnet(
-        VpcId=vpc.id, CidrBlock="172.28.7.192/26", AvailabilityZone="us-east-1c"
-    )
-
-    response = client.create_load_balancer(
-        Name="my-lb",
-        Subnets=[subnet1.id, subnet2.id],
-        SecurityGroups=[security_group.id],
-        Scheme="internal",
-        Tags=[{"Key": "key_name", "Value": "a_value"}],
-    )
-    arn = response["LoadBalancers"][0]["LoadBalancerArn"]
-
-    client.set_subnets(
-        LoadBalancerArn=arn, Subnets=[subnet1.id, subnet2.id, subnet3.id]
-    )
-
-    resp = client.describe_load_balancers(LoadBalancerArns=[arn])
-    len(resp["LoadBalancers"][0]["AvailabilityZones"]).should.equal(3)
-
-    # Only 1 AZ
-    with pytest.raises(ClientError) as ex:
-        client.set_subnets(LoadBalancerArn=arn, Subnets=[subnet1.id])
-    err = ex.value.response["Error"]
-    err["Message"].should.equal("More than 1 availability zone must be specified")
-
-    # Multiple subnets in same AZ
-    with pytest.raises(ClientError) as ex:
-        client.set_subnets(
-            LoadBalancerArn=arn, Subnets=[subnet1.id, subnet2.id, subnet2.id]
-        )
-    err = ex.value.response["Error"]
-    err["Message"].should.equal("The specified subnet does not exist.")
-
-
-@mock_elbv2
-@mock_ec2
 def test_modify_load_balancer_attributes_idle_timeout():
     response, _, _, _, _, client = create_load_balancer()
     arn = response["LoadBalancers"][0]["LoadBalancerArn"]
@@ -1144,6 +1205,69 @@ def test_modify_load_balancer_attributes_idle_timeout():
         )
     )[0]
     idle_timeout["Value"].should.equal("600")
+
+
+@mock_elbv2
+@mock_ec2
+def test_modify_load_balancer_attributes_routing_http2_enabled():
+    response, _, _, _, _, client = create_load_balancer()
+    arn = response["LoadBalancers"][0]["LoadBalancerArn"]
+
+    client.modify_load_balancer_attributes(
+        LoadBalancerArn=arn,
+        Attributes=[{"Key": "routing.http2.enabled", "Value": "false"}],
+    )
+
+    response = client.describe_load_balancer_attributes(LoadBalancerArn=arn)
+    routing_http2_enabled = list(
+        filter(
+            lambda item: item["Key"] == "routing.http2.enabled", response["Attributes"]
+        )
+    )[0]
+    routing_http2_enabled["Value"].should.equal("false")
+
+
+@mock_elbv2
+@mock_ec2
+def test_modify_load_balancer_attributes_crosszone_enabled():
+    response, _, _, _, _, client = create_load_balancer()
+    arn = response["LoadBalancers"][0]["LoadBalancerArn"]
+
+    client.modify_load_balancer_attributes(
+        LoadBalancerArn=arn,
+        Attributes=[
+            {"Key": "load_balancing.cross_zone.enabled", "Value": "false"},
+            {"Key": "deletion_protection.enabled", "Value": "false"},
+        ],
+    )
+
+    attrs = client.describe_load_balancer_attributes(LoadBalancerArn=arn)["Attributes"]
+    attrs.should.contain({"Key": "deletion_protection.enabled", "Value": "false"})
+    attrs.should.contain({"Key": "load_balancing.cross_zone.enabled", "Value": "false"})
+
+
+@mock_elbv2
+@mock_ec2
+def test_modify_load_balancer_attributes_routing_http_drop_invalid_header_fields_enabled():
+    response, _, _, _, _, client = create_load_balancer()
+    arn = response["LoadBalancers"][0]["LoadBalancerArn"]
+
+    client.modify_load_balancer_attributes(
+        LoadBalancerArn=arn,
+        Attributes=[
+            {"Key": "routing.http.drop_invalid_header_fields.enabled", "Value": "false"}
+        ],
+    )
+
+    response = client.describe_load_balancer_attributes(LoadBalancerArn=arn)
+    routing_http_drop_invalid_header_fields_enabled = list(
+        filter(
+            lambda item: item["Key"]
+            == "routing.http.drop_invalid_header_fields.enabled",
+            response["Attributes"],
+        )
+    )[0]
+    routing_http_drop_invalid_header_fields_enabled["Value"].should.equal("false")
 
 
 @mock_elbv2
@@ -1201,7 +1325,23 @@ def test_modify_listener_http_to_https():
     )
     listener_arn = response["Listeners"][0]["ListenerArn"]
 
-    response = acm.request_certificate(
+    # No default cert
+    with pytest.raises(ClientError) as ex:
+        client.modify_listener(
+            ListenerArn=listener_arn,
+            Port=443,
+            Protocol="HTTPS",
+            SslPolicy="ELBSecurityPolicy-TLS-1-2-2017-01",
+            Certificates=[],
+            DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
+        )
+    err = ex.value.response["Error"]
+    err["Code"].should.equal("CertificateWereNotPassed")
+    err["Message"].should.equal(
+        "You must provide a list containing exactly one certificate if the listener protocol is HTTPS."
+    )
+
+    acm.request_certificate(
         DomainName="google.com",
         SubjectAlternativeNames=["google.com", "www.google.com", "mail.google.com"],
     )
@@ -1216,7 +1356,7 @@ def test_modify_listener_http_to_https():
         Port=443,
         Protocol="HTTPS",
         SslPolicy="ELBSecurityPolicy-TLS-1-2-2017-01",
-        Certificates=[{"CertificateArn": yahoo_arn,},],
+        Certificates=[{"CertificateArn": yahoo_arn}],
         DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
     )
     response["Listeners"][0]["Port"].should.equal(443)
@@ -1235,24 +1375,8 @@ def test_modify_listener_http_to_https():
         )
         listener.certificate.should.equal(yahoo_arn)
 
-    # No default cert
-    with pytest.raises(ClientError) as ex:
-        client.modify_listener(
-            ListenerArn=listener_arn,
-            Port=443,
-            Protocol="HTTPS",
-            SslPolicy="ELBSecurityPolicy-TLS-1-2-2017-01",
-            Certificates=[],
-            DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
-        )
-    err = ex.value.response["Error"]
-    err["Code"].should.equal("CertificateWereNotPassed")
-    err["Message"].should.equal(
-        "You must provide a list containing exactly one certificate if the listener protocol is HTTPS."
-    )
-
     # Bad cert
-    with pytest.raises(ClientError):
+    with pytest.raises(ClientError) as exc:
         client.modify_listener(
             ListenerArn=listener_arn,
             Port=443,
@@ -1261,6 +1385,237 @@ def test_modify_listener_http_to_https():
             Certificates=[{"CertificateArn": "lalala", "IsDefault": True}],
             DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
         )
+    err = exc.value.response["Error"]
+    err["Message"].should.equal("Certificate lalala not found")
+
+    # Unknown protocol
+    with pytest.raises(ClientError) as exc:
+        client.modify_listener(
+            ListenerArn=listener_arn,
+            Port=443,
+            Protocol="HTP",
+            SslPolicy="ELBSecurityPolicy-TLS-1-2-2017-01",
+            Certificates=[{"CertificateArn": yahoo_arn, "IsDefault": True}],
+            DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
+        )
+    err = exc.value.response["Error"]
+    err["Message"].should.equal("Protocol HTP is not supported")
+
+
+@mock_acm
+@mock_ec2
+@mock_elbv2
+def test_modify_listener_of_https_target_group():
+    # Verify we can add a listener for a TargetGroup that is already HTTPS
+    client = boto3.client("elbv2", region_name="eu-central-1")
+    acm = boto3.client("acm", region_name="eu-central-1")
+    ec2 = boto3.resource("ec2", region_name="eu-central-1")
+
+    security_group = ec2.create_security_group(
+        GroupName="a-security-group", Description="First One"
+    )
+    vpc = ec2.create_vpc(CidrBlock="172.28.7.0/24", InstanceTenancy="default")
+    subnet1 = ec2.create_subnet(
+        VpcId=vpc.id, CidrBlock="172.28.7.192/26", AvailabilityZone="eu-central-1a"
+    )
+
+    response = client.create_load_balancer(
+        Name="my-lb",
+        Subnets=[subnet1.id],
+        SecurityGroups=[security_group.id],
+        Scheme="internal",
+        Tags=[{"Key": "key_name", "Value": "a_value"}],
+    )
+
+    load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
+
+    response = client.create_target_group(
+        Name="a-target", Protocol="HTTPS", Port=8443, VpcId=vpc.id
+    )
+    target_group = response.get("TargetGroups")[0]
+    target_group_arn = target_group["TargetGroupArn"]
+
+    # HTTPS listener
+    response = acm.request_certificate(
+        DomainName="google.com", SubjectAlternativeNames=["google.com"]
+    )
+    google_arn = response["CertificateArn"]
+    response = client.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol="HTTPS",
+        Port=443,
+        Certificates=[{"CertificateArn": google_arn}],
+        DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
+    )
+    listener_arn = response["Listeners"][0]["ListenerArn"]
+
+    # Now modify the HTTPS listener with a different certificate
+    response = acm.request_certificate(
+        DomainName="yahoo.com", SubjectAlternativeNames=["yahoo.com"]
+    )
+    yahoo_arn = response["CertificateArn"]
+
+    listener = client.modify_listener(
+        ListenerArn=listener_arn,
+        Certificates=[{"CertificateArn": yahoo_arn}],
+        DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
+    )["Listeners"][0]
+    listener["Certificates"].should.equal([{"CertificateArn": yahoo_arn}])
+
+    listener = client.describe_listeners(ListenerArns=[listener_arn])["Listeners"][0]
+    listener["Certificates"].should.equal([{"CertificateArn": yahoo_arn}])
+
+
+@mock_elbv2
+def test_add_unknown_listener_certificate():
+    client = boto3.client("elbv2", region_name="eu-central-1")
+    with pytest.raises(ClientError) as exc:
+        client.add_listener_certificates(
+            ListenerArn="unknown", Certificates=[{"CertificateArn": "google_arn"}]
+        )
+    err = exc.value.response["Error"]
+    err["Code"].should.equal("ListenerNotFound")
+
+
+@mock_elbv2
+def test_describe_unknown_listener_certificate():
+    client = boto3.client("elbv2", region_name="eu-central-1")
+    with pytest.raises(ClientError) as exc:
+        client.describe_listener_certificates(ListenerArn="unknown")
+    err = exc.value.response["Error"]
+    err["Code"].should.equal("ListenerNotFound")
+
+
+@mock_acm
+@mock_ec2
+@mock_elbv2
+def test_add_listener_certificate():
+    # Verify we can add a listener for a TargetGroup that is already HTTPS
+    client = boto3.client("elbv2", region_name="eu-central-1")
+    acm = boto3.client("acm", region_name="eu-central-1")
+    ec2 = boto3.resource("ec2", region_name="eu-central-1")
+
+    vpc = ec2.create_vpc(CidrBlock="172.28.7.0/24", InstanceTenancy="default")
+    subnet1 = ec2.create_subnet(
+        VpcId=vpc.id, CidrBlock="172.28.7.192/26", AvailabilityZone="eu-central-1a"
+    )
+
+    response = client.create_load_balancer(
+        Name="my-lb",
+        Subnets=[subnet1.id],
+        Scheme="internal",
+        Tags=[{"Key": "key_name", "Value": "a_value"}],
+    )
+
+    load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
+
+    response = client.create_target_group(Name="a-target", Protocol="HTTPS", Port=8443)
+    target_group_arn = response.get("TargetGroups")[0]["TargetGroupArn"]
+
+    # HTTPS listener
+    response = acm.request_certificate(
+        DomainName="google.com", SubjectAlternativeNames=["google.com"]
+    )
+    google_arn = response["CertificateArn"]
+    response = client.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol="HTTPS",
+        Port=443,
+        DefaultActions=[{"Type": "forward", "TargetGroupArn": target_group_arn}],
+    )
+    listener_arn = response["Listeners"][0]["ListenerArn"]
+
+    certs = client.add_listener_certificates(
+        ListenerArn=listener_arn, Certificates=[{"CertificateArn": google_arn}]
+    )["Certificates"]
+    certs.should.have.length_of(1)
+    certs[0].should.have.key("CertificateArn").equals(google_arn)
+
+    certs = client.describe_listener_certificates(ListenerArn=listener_arn)[
+        "Certificates"
+    ]
+    certs.should.have.length_of(1)
+    certs[0].should.have.key("CertificateArn").equals(google_arn)
+
+    client.remove_listener_certificates(
+        ListenerArn=listener_arn, Certificates=[{"CertificateArn": google_arn}]
+    )
+
+    certs = client.describe_listener_certificates(ListenerArn=listener_arn)[
+        "Certificates"
+    ]
+    certs.should.have.length_of(0)
+
+
+@mock_elbv2
+@mock_ec2
+def test_forward_config_action():
+    response, _, _, _, _, conn = create_load_balancer()
+    load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
+
+    response = conn.create_target_group(Name="a-target", Protocol="HTTPS", Port=8443)
+    target_group_arn = response.get("TargetGroups")[0]["TargetGroupArn"]
+
+    action = {
+        "Type": "forward",
+        "ForwardConfig": {
+            "TargetGroups": [{"TargetGroupArn": target_group_arn, "Weight": 1}],
+        },
+    }
+    expected_action = copy.deepcopy(action)
+    expected_action["ForwardConfig"]["TargetGroupStickinessConfig"] = {"Enabled": False}
+
+    response = conn.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol="HTTP",
+        Port=80,
+        DefaultActions=[action],
+    )
+
+    listener = response.get("Listeners")[0]
+    listener.get("DefaultActions").should.equal([expected_action])
+    listener_arn = listener.get("ListenerArn")
+
+    describe_listener_response = conn.describe_listeners(ListenerArns=[listener_arn])
+    describe_listener_actions = describe_listener_response["Listeners"][0][
+        "DefaultActions"
+    ]
+    describe_listener_actions.should.equal([expected_action])
+
+
+@mock_elbv2
+@mock_ec2
+def test_forward_config_action__with_stickiness():
+    response, _, _, _, _, conn = create_load_balancer()
+    load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
+
+    response = conn.create_target_group(Name="a-target", Protocol="HTTPS", Port=8443)
+    target_group_arn = response.get("TargetGroups")[0]["TargetGroupArn"]
+
+    action = {
+        "Type": "forward",
+        "ForwardConfig": {
+            "TargetGroups": [{"TargetGroupArn": target_group_arn, "Weight": 1}],
+            "TargetGroupStickinessConfig": {"Enabled": True},
+        },
+    }
+
+    response = conn.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol="HTTP",
+        Port=80,
+        DefaultActions=[action],
+    )
+
+    listener = response.get("Listeners")[0]
+    listener.get("DefaultActions").should.equal([action])
+    listener_arn = listener.get("ListenerArn")
+
+    describe_listener_response = conn.describe_listeners(ListenerArns=[listener_arn])
+    describe_listener_actions = describe_listener_response["Listeners"][0][
+        "DefaultActions"
+    ]
+    describe_listener_actions.should.equal([action])
 
 
 @mock_elbv2
@@ -1275,7 +1630,11 @@ def test_redirect_action_listener_rule():
             "Protocol": "HTTPS",
             "Port": "443",
             "StatusCode": "HTTP_301",
+            "Host": "h",
+            "Path": "p",
+            "Query": "q",
         },
+        "Order": 1,
     }
 
     response = conn.create_listener(
@@ -1286,39 +1645,27 @@ def test_redirect_action_listener_rule():
     )
 
     listener = response.get("Listeners")[0]
-    expected_default_actions = [
-        {
-            "Type": "redirect",
-            "RedirectConfig": {
-                "Protocol": "HTTPS",
-                "Port": "443",
-                "StatusCode": "HTTP_301",
-            },
-        }
-    ]
-    listener.get("DefaultActions").should.equal(expected_default_actions)
+    listener.get("DefaultActions").should.equal([action])
     listener_arn = listener.get("ListenerArn")
 
     conn.create_rule(
         ListenerArn=listener_arn,
-        Conditions=[{"Field": "path-pattern", "Values": ["/*"]},],
+        Conditions=[{"Field": "path-pattern", "Values": ["/*"]}],
         Priority=3,
         Actions=[action],
     )
     describe_rules_response = conn.describe_rules(ListenerArn=listener_arn)
-    describe_rules_response["Rules"][0]["Actions"].should.equal(
-        expected_default_actions
-    )
+    describe_rules_response["Rules"][0]["Actions"].should.equal([action])
 
     describe_listener_response = conn.describe_listeners(ListenerArns=[listener_arn])
     describe_listener_actions = describe_listener_response["Listeners"][0][
         "DefaultActions"
     ]
-    describe_listener_actions.should.equal(expected_default_actions)
+    describe_listener_actions.should.equal([action])
 
     modify_listener_response = conn.modify_listener(ListenerArn=listener_arn, Port=81)
     modify_listener_actions = modify_listener_response["Listeners"][0]["DefaultActions"]
-    modify_listener_actions.should.equal(expected_default_actions)
+    modify_listener_actions.should.equal([action])
 
 
 @mock_elbv2
@@ -1335,6 +1682,7 @@ def test_cognito_action_listener_rule():
             ),
             "UserPoolClientId": "abcd1234abcd",
             "UserPoolDomain": "testpool",
+            "AuthenticationRequestExtraParams": {"param": "test"},
         },
     }
     response = conn.create_listener(
@@ -1350,7 +1698,101 @@ def test_cognito_action_listener_rule():
 
     conn.create_rule(
         ListenerArn=listener_arn,
-        Conditions=[{"Field": "path-pattern", "Values": ["/*"]},],
+        Conditions=[{"Field": "path-pattern", "Values": ["/*"]}],
+        Priority=3,
+        Actions=[action],
+    )
+    describe_rules_response = conn.describe_rules(ListenerArn=listener_arn)
+    describe_rules_response["Rules"][0]["Actions"][0].should.equal(action)
+
+    describe_listener_response = conn.describe_listeners(ListenerArns=[listener_arn])
+    describe_listener_actions = describe_listener_response["Listeners"][0][
+        "DefaultActions"
+    ][0]
+    describe_listener_actions.should.equal(action)
+
+
+@mock_elbv2
+@mock_ec2
+def test_oidc_action_listener__simple():
+    response, _, _, _, _, conn = create_load_balancer()
+    load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
+
+    action = {
+        "Type": "authenticate-oidc",
+        "AuthenticateOidcConfig": {
+            "AuthorizationEndpoint": "ae",
+            "ClientId": "ci",
+            "TokenEndpoint": "te",
+            "UserInfoEndpoint": "uie",
+            "Issuer": "is",
+        },
+    }
+    response = conn.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol="HTTP",
+        Port=80,
+        DefaultActions=[action],
+    )
+
+    listener = response.get("Listeners")[0]
+    listener.get("DefaultActions")[0].should.equal(action)
+    listener_arn = listener.get("ListenerArn")
+
+    conn.create_rule(
+        ListenerArn=listener_arn,
+        Conditions=[{"Field": "path-pattern", "Values": ["/*"]}],
+        Priority=3,
+        Actions=[action],
+    )
+    describe_rules_response = conn.describe_rules(ListenerArn=listener_arn)
+    describe_rules_response["Rules"][0]["Actions"][0].should.equal(action)
+
+    describe_listener_response = conn.describe_listeners(ListenerArns=[listener_arn])
+    describe_listener_actions = describe_listener_response["Listeners"][0][
+        "DefaultActions"
+    ][0]
+    describe_listener_actions.should.equal(action)
+
+
+@mock_elbv2
+@mock_ec2
+@pytest.mark.parametrize("use_secret", [True, False])
+def test_oidc_action_listener(use_secret):
+    response, _, _, _, _, conn = create_load_balancer()
+    load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
+
+    action = {
+        "Type": "authenticate-oidc",
+        "AuthenticateOidcConfig": {
+            "Issuer": "is",
+            "AuthorizationEndpoint": "ae",
+            "TokenEndpoint": "te",
+            "UserInfoEndpoint": "uie",
+            "ClientId": "ci",
+            "ClientSecret": "cs",
+            "SessionCookieName": "scn",
+            "Scope": "s",
+            "SessionTimeout": 42,
+            "AuthenticationRequestExtraParams": {"param": "test"},
+            "OnUnauthenticatedRequest": "our",
+            "UseExistingClientSecret": use_secret,
+        },
+    }
+    response = conn.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol="HTTP",
+        Port=80,
+        DefaultActions=[action],
+    )
+
+    listener = response.get("Listeners")[0]
+    listener.get("DefaultActions")[0].should.equal(action)
+    listener_arn = listener.get("ListenerArn")
+
+    conn.create_rule(
+        ListenerArn=listener_arn,
+        Conditions=[{"Field": "path-pattern", "Values": ["/*"]}],
         Priority=3,
         Actions=[action],
     )
@@ -1391,7 +1833,7 @@ def test_fixed_response_action_listener_rule():
 
     conn.create_rule(
         ListenerArn=listener_arn,
-        Conditions=[{"Field": "path-pattern", "Values": ["/*"]},],
+        Conditions=[{"Field": "path-pattern", "Values": ["/*"]}],
         Priority=3,
         Actions=[action],
     )
@@ -1457,3 +1899,25 @@ def test_fixed_response_action_listener_rule_validates_content_type():
     invalid_content_type_exception.value.response["Error"]["Code"].should.equal(
         "InvalidLoadBalancerAction"
     )
+
+
+@mock_elbv2
+@mock_ec2
+def test_create_listener_with_alpn_policy():
+    response, _, _, _, _, conn = create_load_balancer()
+    load_balancer_arn = response.get("LoadBalancers")[0].get("LoadBalancerArn")
+
+    response = conn.create_listener(
+        LoadBalancerArn=load_balancer_arn,
+        Protocol="HTTP",
+        Port=80,
+        DefaultActions=[],
+        AlpnPolicy=["pol1", "pol2"],
+    )
+
+    listener = response.get("Listeners")[0]
+    listener_arn = listener["ListenerArn"]
+    listener.get("AlpnPolicy").should.equal(["pol1", "pol2"])
+
+    describe = conn.describe_listeners(ListenerArns=[listener_arn])["Listeners"][0]
+    describe.should.have.key("AlpnPolicy").should.equal(["pol1", "pol2"])

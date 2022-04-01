@@ -36,6 +36,16 @@ def test_ds_delete_directory():
     result = client.delete_directory(DirectoryId=directory_id)
     assert result["DirectoryId"] == directory_id
 
+    # Verify there are no dictionaries, network interfaces or associated
+    # security groups.
+    result = client.describe_directories()
+    assert len(result["DirectoryDescriptions"]) == 0
+    result = ec2_client.describe_network_interfaces()
+    assert len(result["NetworkInterfaces"]) == 0
+    result = ec2_client.describe_security_groups()
+    for group in result["SecurityGroups"]:
+        assert "directory controllers" not in group["Description"]
+
     # Attempt to delete a non-existent directory.
     nonexistent_id = f"d-{get_random_hex(10)}"
     with pytest.raises(ClientError) as exc:
@@ -116,7 +126,8 @@ def test_ds_describe_directories():
         assert dir_info["Type"] == "SimpleAD"
         assert dir_info["VpcSettings"]["VpcId"].startswith("vpc-")
         assert len(dir_info["VpcSettings"]["SubnetIds"]) == 2
-        assert set(dir_info["DnsIpAddrs"]) == set(["10.0.1.1", "10.0.0.1"])
+        assert dir_info["VpcSettings"]["SecurityGroupId"].startswith("sg-")
+        assert len(dir_info["DnsIpAddrs"]) == 2
     assert "NextToken" not in result
 
     # Test with a specific directory ID.
@@ -172,9 +183,9 @@ def test_ds_create_alias():
     err = exc.value.response["Error"]
     assert err["Code"] == "ValidationException"
     assert (
-        fr"Value '{bad_alias}' at 'alias' failed to satisfy constraint: "
-        fr"Member must satisfy regular expression pattern: "
-        fr"^(?!D-|d-)([\da-zA-Z]+)([-]*[\da-zA-Z])*$"
+        rf"Value '{bad_alias}' at 'alias' failed to satisfy constraint: "
+        rf"Member must satisfy regular expression pattern: "
+        rf"^(?!D-|d-)([\da-zA-Z]+)([-]*[\da-zA-Z])*$"
     ) in err["Message"]
 
     # Too long.
@@ -250,7 +261,7 @@ def test_ds_enable_sso():
     err = exc.value.response["Error"]
     assert err["Code"] == "ValidationException"
     assert (
-        "Value at 'password' failed to satisfy constraint: Member must "
+        "Value at 'ssoPassword' failed to satisfy constraint: Member must "
         "have length less than or equal to 128"
     ) in err["Message"]
 
@@ -264,8 +275,8 @@ def test_ds_enable_sso():
     err = exc.value.response["Error"]
     assert err["Code"] == "ValidationException"
     assert (
-        fr"Value '{bad_username}' at 'userName' failed to satisfy constraint: "
-        fr"Member must satisfy regular expression pattern: ^[a-zA-Z0-9._-]+$"
+        rf"Value '{bad_username}' at 'userName' failed to satisfy constraint: "
+        rf"Member must satisfy regular expression pattern: ^[a-zA-Z0-9._-]+$"
     ) in err["Message"]
 
     # Valid execution.
@@ -295,7 +306,7 @@ def test_ds_disable_sso():
     err = exc.value.response["Error"]
     assert err["Code"] == "ValidationException"
     assert (
-        "Value at 'password' failed to satisfy constraint: Member must "
+        "Value at 'ssoPassword' failed to satisfy constraint: Member must "
         "have length less than or equal to 128"
     ) in err["Message"]
 
@@ -309,8 +320,8 @@ def test_ds_disable_sso():
     err = exc.value.response["Error"]
     assert err["Code"] == "ValidationException"
     assert (
-        fr"Value '{bad_username}' at 'userName' failed to satisfy constraint: "
-        fr"Member must satisfy regular expression pattern: ^[a-zA-Z0-9._-]+$"
+        rf"Value '{bad_username}' at 'userName' failed to satisfy constraint: "
+        rf"Member must satisfy regular expression pattern: ^[a-zA-Z0-9._-]+$"
     ) in err["Message"]
 
     # Valid execution.  First enable SSO, as the default is disabled SSO.

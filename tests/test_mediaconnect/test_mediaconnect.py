@@ -23,7 +23,14 @@ def _create_flow_config(name, **kwargs):
             }
         ],
     )
-    outputs = kwargs.get("outputs", [{"Name": "Output 1", "Protocol": "zixi-push"}])
+    outputs = kwargs.get(
+        "outputs",
+        [
+            {"Name": "Output 1", "Protocol": "zixi-push"},
+            {"Name": "Output 2", "Protocol": "zixi-pull"},
+            {"Name": "Output 3", "Protocol": "srt-listener"},
+        ],
+    )
     source = kwargs.get(
         "source",
         {
@@ -59,6 +66,9 @@ def test_create_flow_succeeds():
     response["Flow"]["FlowArn"][:26].should.equal("arn:aws:mediaconnect:flow:")
     response["Flow"]["Name"].should.equal("test Flow 1")
     response["Flow"]["Status"].should.equal("STANDBY")
+    response["Flow"]["Outputs"][0].should.equal({"Name": "Output 1"})
+    response["Flow"]["Outputs"][1]["ListenerAddress"].should.equal("1.0.0.0")
+    response["Flow"]["Outputs"][2]["ListenerAddress"].should.equal("2.0.0.0")
     response["Flow"]["Sources"][0][
         "SourceArn"
     ] == "arn:aws:mediaconnect:source:Source A"
@@ -196,9 +206,7 @@ def test_add_flow_vpc_interfaces_fails():
     client = boto3.client("mediaconnect", region_name=region)
     flow_arn = "unknown-flow"
     with pytest.raises(ClientError) as err:
-        client.add_flow_vpc_interfaces(
-            FlowArn=flow_arn, VpcInterfaces=[],
-        )
+        client.add_flow_vpc_interfaces(FlowArn=flow_arn, VpcInterfaces=[])
     err = err.value.response["Error"]
     err["Code"].should.equal("NotFoundException")
     err["Message"].should.equal(
@@ -282,9 +290,7 @@ def test_add_flow_outputs_fails():
     client = boto3.client("mediaconnect", region_name=region)
     flow_arn = "unknown-flow"
     with pytest.raises(ClientError) as err:
-        client.add_flow_outputs(
-            FlowArn=flow_arn, Outputs=[],
-        )
+        client.add_flow_outputs(FlowArn=flow_arn, Outputs=[])
     err = err.value.response["Error"]
     err["Code"].should.equal("NotFoundException")
     err["Message"].should.equal(
@@ -298,9 +304,7 @@ def test_remove_flow_output_fails():
     flow_arn = "unknown-flow"
     output_arn = "unknown-arn"
     with pytest.raises(ClientError) as err:
-        client.remove_flow_output(
-            FlowArn=flow_arn, OutputArn=output_arn,
-        )
+        client.remove_flow_output(FlowArn=flow_arn, OutputArn=output_arn)
     err = err.value.response["Error"]
     err["Code"].should.equal("NotFoundException")
     err["Message"].should.equal(

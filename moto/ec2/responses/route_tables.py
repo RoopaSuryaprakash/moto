@@ -1,8 +1,7 @@
-from moto.core.responses import BaseResponse
-from moto.ec2.utils import filters_from_querystring
+from ._base_response import EC2BaseResponse
 
 
-class RouteTables(BaseResponse):
+class RouteTables(EC2BaseResponse):
     def associate_route_table(self):
         route_table_id = self._get_param("RouteTableId")
         gateway_id = self._get_param("GatewayId")
@@ -76,7 +75,7 @@ class RouteTables(BaseResponse):
 
     def describe_route_tables(self):
         route_table_ids = self._get_multi_param("RouteTableId")
-        filters = filters_from_querystring(self.querystring)
+        filters = self._filters_from_querystring()
         route_tables = self.ec2_backend.describe_route_tables(route_table_ids, filters)
         template = self.response_template(DESCRIBE_ROUTE_TABLES_RESPONSE)
         return template.render(route_tables=route_tables)
@@ -252,11 +251,19 @@ DESCRIBE_ROUTE_TABLES_RESPONSE = """
             {% endfor %}
           </routeSet>
           <associationSet>
+              <item>
+                <routeTableAssociationId>{{ route_table.main_association }}</routeTableAssociationId>
+                <routeTableId>{{ route_table.id }}</routeTableId>
+                <main>true</main>
+                <associationState>
+                  <state>associated</state>
+                </associationState>
+              </item>
             {% for association_id,subnet_id in route_table.associations.items() %}
               <item>
                 <routeTableAssociationId>{{ association_id }}</routeTableAssociationId>
                 <routeTableId>{{ route_table.id }}</routeTableId>
-                <main>true</main>
+                <main>false</main>
                 {% if subnet_id.startswith("igw") %}
                 <gatewayId>{{ subnet_id }}</gatewayId>
                 {% endif %}

@@ -1,6 +1,7 @@
-from boto3 import Session
-
 from moto.core import ACCOUNT_ID, BaseBackend, BaseModel
+from moto.core.utils import BackendDict
+from moto.utilities.tagging_service import TaggingService
+from .exceptions import ResourceNotFound
 
 
 class TimestreamTable(BaseModel):
@@ -8,14 +9,17 @@ class TimestreamTable(BaseModel):
         self.region_name = region_name
         self.name = table_name
         self.db_name = db_name
-        self.retention_properties = retention_properties
+        self.retention_properties = retention_properties or {
+            "MemoryStoreRetentionPeriodInHours": 123,
+            "MagneticStoreRetentionPeriodInDays": 123,
+        }
         self.records = []
 
     def update(self, retention_properties):
         self.retention_properties = retention_properties
 
     def write_records(self, records):
-        self.records.append(records)
+        self.records.extend(records)
 
     @property
     def arn(self):
@@ -35,7 +39,9 @@ class TimestreamDatabase(BaseModel):
     def __init__(self, region_name, database_name, kms_key_id):
         self.region_name = region_name
         self.name = database_name
-        self.kms_key_id = kms_key_id
+        self.kms_key_id = (
+            kms_key_id or f"arn:aws:kms:{region_name}:{ACCOUNT_ID}:key/default_key"
+        )
         self.tables = dict()
 
     def update(self, kms_key_id):
@@ -60,6 +66,8 @@ class TimestreamDatabase(BaseModel):
         del self.tables[table_name]
 
     def describe_table(self, table_name):
+        if table_name not in self.tables:
+            raise ResourceNotFound(f"The table {table_name} does not exist.")
         return self.tables[table_name]
 
     def list_tables(self):
@@ -84,16 +92,20 @@ class TimestreamWriteBackend(BaseBackend):
     def __init__(self, region_name):
         self.region_name = region_name
         self.databases = dict()
+        self.tagging_service = TaggingService()
 
     def create_database(self, database_name, kms_key_id, tags):
         database = TimestreamDatabase(self.region_name, database_name, kms_key_id)
         self.databases[database_name] = database
+        self.tagging_service.tag_resource(database.arn, tags)
         return database
 
     def delete_database(self, database_name):
         del self.databases[database_name]
 
     def describe_database(self, database_name):
+        if database_name not in self.databases:
+            raise ResourceNotFound(f"The database {database_name} does not exist.")
         return self.databases[database_name]
 
     def list_databases(self):
@@ -104,9 +116,10 @@ class TimestreamWriteBackend(BaseBackend):
         database.update(kms_key_id=kms_key_id)
         return database
 
-    def create_table(self, database_name, table_name, retention_properties):
+    def create_table(self, database_name, table_name, retention_properties, tags):
         database = self.describe_database(database_name)
         table = database.create_table(table_name, retention_properties)
+        self.tagging_service.tag_resource(table.arn, tags)
         return table
 
     def delete_table(self, database_name, table_name):
@@ -148,33 +161,25 @@ class TimestreamWriteBackend(BaseBackend):
             ]
         }
 
+    def list_tags_for_resource(self, resource_arn):
+        return self.tagging_service.list_tags_for_resource(resource_arn)
+
+    def tag_resource(self, resource_arn, tags):
+        self.tagging_service.tag_resource(resource_arn, tags)
+
+    def untag_resource(self, resource_arn, tag_keys):
+        self.tagging_service.untag_resource_using_names(resource_arn, tag_keys)
+
     def reset(self):
         region_name = self.region_name
         self.__dict__ = {}
         self.__init__(region_name)
 
 
-timestreamwrite_backends = {}
-for available_region in Session().get_available_regions("timestream-write"):
-    timestreamwrite_backends[available_region] = TimestreamWriteBackend(
-        available_region
-    )
-for available_region in Session().get_available_regions(
-    "timestream-write", partition_name="aws-us-gov"
-):
-    timestreamwrite_backends[available_region] = TimestreamWriteBackend(
-        available_region
-    )
-for available_region in Session().get_available_regions(
-    "timestream-write", partition_name="aws-cn"
-):
-    timestreamwrite_backends[available_region] = TimestreamWriteBackend(
-        available_region
-    )
+timestreamwrite_backends = BackendDict(TimestreamWriteBackend, "timestream-write")
 
-if len(timestreamwrite_backends) == 0:
-    # Boto does not return any regions at the time of writing (20/10/2021)
-    # Hardcoding the known regions for now
-    # Thanks, Jeff
-    for r in ["us-east-1", "us-east-2", "us-west-2", "eu-central-1", "eu-west-1"]:
-        timestreamwrite_backends[r] = TimestreamWriteBackend(r)
+# Boto does not return any regions at the time of writing (20/10/2021)
+# Hardcoding the known regions for now
+# Thanks, Jeff
+for r in ["us-east-1", "us-east-2", "us-west-2", "eu-central-1", "eu-west-1"]:
+    timestreamwrite_backends[r] = TimestreamWriteBackend(r)

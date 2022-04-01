@@ -4,7 +4,6 @@ from datetime import datetime
 
 from moto.core import BaseBackend, BaseModel
 from moto.glue.exceptions import CrawlerRunningException, CrawlerNotRunningException
-
 from .exceptions import (
     JsonRESTError,
     CrawlerAlreadyExistsException,
@@ -16,13 +15,27 @@ from .exceptions import (
     PartitionAlreadyExistsException,
     PartitionNotFoundException,
     VersionNotFoundException,
+    JobNotFoundException,
+    ConcurrentRunsExceededException,
 )
+from ..utilities.paginator import paginate
 
 
 class GlueBackend(BaseBackend):
+    PAGINATION_MODEL = {
+        "list_jobs": {
+            "input_token": "next_token",
+            "limit_key": "max_results",
+            "limit_default": 100,
+            "unique_attribute": "name",
+        },
+    }
+
     def __init__(self):
         self.databases = OrderedDict()
         self.crawlers = OrderedDict()
+        self.jobs = OrderedDict()
+        self.job_runs = OrderedDict()
 
     @staticmethod
     def default_vpc_endpoint_service(service_region, zones):
@@ -47,6 +60,11 @@ class GlueBackend(BaseBackend):
 
     def get_databases(self):
         return [self.databases[key] for key in self.databases] if self.databases else []
+
+    def delete_database(self, database_name):
+        if database_name not in self.databases:
+            raise DatabaseNotFoundException(database_name)
+        del self.databases[database_name]
 
     def create_table(self, database_name, table_name, table_input):
         database = self.get_database(database_name)
@@ -137,6 +155,69 @@ class GlueBackend(BaseBackend):
             del self.crawlers[name]
         except KeyError:
             raise CrawlerNotFoundException(name)
+
+    def create_job(
+        self,
+        name,
+        role,
+        command,
+        description,
+        log_uri,
+        execution_property,
+        default_arguments,
+        non_overridable_arguments,
+        connections,
+        max_retries,
+        allocated_capacity,
+        timeout,
+        max_capacity,
+        security_configuration,
+        tags,
+        notification_property,
+        glue_version,
+        number_of_workers,
+        worker_type,
+    ):
+        self.jobs[name] = FakeJob(
+            name,
+            role,
+            command,
+            description,
+            log_uri,
+            execution_property,
+            default_arguments,
+            non_overridable_arguments,
+            connections,
+            max_retries,
+            allocated_capacity,
+            timeout,
+            max_capacity,
+            security_configuration,
+            tags,
+            notification_property,
+            glue_version,
+            number_of_workers,
+            worker_type,
+        )
+        return name
+
+    def get_job(self, name):
+        try:
+            return self.jobs[name]
+        except KeyError:
+            raise JobNotFoundException(name)
+
+    def start_job_run(self, name):
+        job = self.get_job(name)
+        return job.start_job_run()
+
+    def get_job_run(self, name, run_id):
+        job = self.get_job(name)
+        return job.get_job_run(run_id)
+
+    @paginate(pagination_model=PAGINATION_MODEL)
+    def list_jobs(self):
+        return [job for _, job in self.jobs.items()]
 
 
 class FakeDatabase(BaseModel):
@@ -338,7 +419,7 @@ class FakeCrawler(BaseModel):
 
 class LastCrawlInfo(BaseModel):
     def __init__(
-        self, error_message, log_group, log_stream, message_prefix, start_time, status,
+        self, error_message, log_group, log_stream, message_prefix, start_time, status
     ):
         self.error_message = error_message
         self.log_group = log_group
@@ -355,6 +436,145 @@ class LastCrawlInfo(BaseModel):
             "MessagePrefix": self.message_prefix,
             "StartTime": self.start_time,
             "Status": self.status,
+        }
+
+
+class FakeJob:
+    def __init__(
+        self,
+        name,
+        role,
+        command,
+        description=None,
+        log_uri=None,
+        execution_property=None,
+        default_arguments=None,
+        non_overridable_arguments=None,
+        connections=None,
+        max_retries=None,
+        allocated_capacity=None,
+        timeout=None,
+        max_capacity=None,
+        security_configuration=None,
+        tags=None,
+        notification_property=None,
+        glue_version=None,
+        number_of_workers=None,
+        worker_type=None,
+    ):
+        self.name = name
+        self.description = description
+        self.log_uri = log_uri
+        self.role = role
+        self.execution_property = execution_property
+        self.command = command
+        self.default_arguments = default_arguments
+        self.non_overridable_arguments = non_overridable_arguments
+        self.connections = connections
+        self.max_retries = max_retries
+        self.allocated_capacity = allocated_capacity
+        self.timeout = timeout
+        self.state = "READY"
+        self.max_capacity = max_capacity
+        self.security_configuration = security_configuration
+        self.tags = tags
+        self.notification_property = notification_property
+        self.glue_version = glue_version
+        self.number_of_workers = number_of_workers
+        self.worker_type = worker_type
+        self.created_on = datetime.utcnow()
+        self.last_modified_on = datetime.utcnow()
+
+    def get_name(self):
+        return self.name
+
+    def as_dict(self):
+        return {
+            "Name": self.name,
+            "Description": self.description,
+            "LogUri": self.log_uri,
+            "Role": self.role,
+            "CreatedOn": self.created_on.isoformat(),
+            "LastModifiedOn": self.last_modified_on.isoformat(),
+            "ExecutionProperty": self.execution_property,
+            "Command": self.command,
+            "DefaultArguments": self.default_arguments,
+            "NonOverridableArguments": self.non_overridable_arguments,
+            "Connections": self.connections,
+            "MaxRetries": self.max_retries,
+            "AllocatedCapacity": self.allocated_capacity,
+            "Timeout": self.timeout,
+            "MaxCapacity": self.max_capacity,
+            "WorkerType": self.worker_type,
+            "NumberOfWorkers": self.number_of_workers,
+            "SecurityConfiguration": self.security_configuration,
+            "NotificationProperty": self.notification_property,
+            "GlueVersion": self.glue_version,
+        }
+
+    def start_job_run(self):
+        if self.state == "RUNNING":
+            raise ConcurrentRunsExceededException(
+                f"Job with name {self.name} already running"
+            )
+        fake_job_run = FakeJobRun(job_name=self.name)
+        self.state = "RUNNING"
+        return fake_job_run.job_run_id
+
+    def get_job_run(self, run_id):
+        fake_job_run = FakeJobRun(job_name=self.name, job_run_id=run_id)
+        return fake_job_run
+
+
+class FakeJobRun:
+    def __init__(
+        self,
+        job_name: int,
+        job_run_id: str = "01",
+        arguments: dict = None,
+        allocated_capacity: int = None,
+        timeout: int = None,
+        worker_type: str = "Standard",
+    ):
+        self.job_name = job_name
+        self.job_run_id = job_run_id
+        self.arguments = arguments
+        self.allocated_capacity = allocated_capacity
+        self.timeout = timeout
+        self.worker_type = worker_type
+        self.started_on = datetime.utcnow()
+        self.modified_on = datetime.utcnow()
+        self.completed_on = datetime.utcnow()
+
+    def get_name(self):
+        return self.job_name
+
+    def as_dict(self):
+        return {
+            "Id": self.job_run_id,
+            "Attempt": 1,
+            "PreviousRunId": "01",
+            "TriggerName": "test_trigger",
+            "JobName": self.job_name,
+            "StartedOn": self.started_on.isoformat(),
+            "LastModifiedOn": self.modified_on.isoformat(),
+            "CompletedOn": self.completed_on.isoformat(),
+            "JobRunState": "SUCCEEDED",
+            "Arguments": self.arguments or {"runSpark": "spark -f test_file.py"},
+            "ErrorMessage": "",
+            "PredecessorRuns": [
+                {"JobName": "string", "RunId": "string"},
+            ],
+            "AllocatedCapacity": self.allocated_capacity or 123,
+            "ExecutionTime": 123,
+            "Timeout": self.timeout or 123,
+            "MaxCapacity": 123.0,
+            "WorkerType": self.worker_type,
+            "NumberOfWorkers": 123,
+            "SecurityConfiguration": "string",
+            "LogGroupName": "test/log",
+            "NotificationProperty": {"NotifyDelayAfter": 123},
+            "GlueVersion": "0.9",
         }
 
 

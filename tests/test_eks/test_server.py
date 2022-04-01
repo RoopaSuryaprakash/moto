@@ -92,7 +92,7 @@ def create_cluster(test_client):
         data = deepcopy(TestCluster.data)
         data.update(name=name)
         response = client.post(
-            TestCluster.endpoint, data=json.dumps(data), headers=DEFAULT_HTTP_HEADERS,
+            TestCluster.endpoint, data=json.dumps(data), headers=DEFAULT_HTTP_HEADERS
         )
         response.status_code.should.equal(StatusCodes.OK)
 
@@ -113,7 +113,7 @@ def create_nodegroup(test_client):
         data = deepcopy(TestNodegroup.data)
         data.update(nodegroupName=name)
         response = client.post(
-            TestNodegroup.endpoint, data=json.dumps(data), headers=DEFAULT_HTTP_HEADERS,
+            TestNodegroup.endpoint, data=json.dumps(data), headers=DEFAULT_HTTP_HEADERS
         )
         response.status_code.should.equal(StatusCodes.OK)
 
@@ -274,6 +274,7 @@ def test_eks_describe_existing_cluster(test_client, create_cluster):
 
     response.status_code.should.equal(StatusCodes.OK)
     result_data[ClusterAttributes.NAME].should.equal(TestCluster.cluster_name)
+    result_data[ClusterAttributes.ENCRYPTION_CONFIG].should.equal([])
     all_arn_values_should_be_valid(
         expected_arn_values=TestCluster.expected_arn_values,
         pattern=RegExTemplates.CLUSTER_ARN,

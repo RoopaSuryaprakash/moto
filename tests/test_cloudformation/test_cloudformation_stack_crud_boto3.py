@@ -1,3 +1,4 @@
+import copy
 import json
 from collections import OrderedDict
 from datetime import datetime, timedelta
@@ -13,7 +14,7 @@ from unittest import SkipTest
 
 from moto import (
     mock_cloudformation,
-    mock_dynamodb2,
+    mock_dynamodb,
     mock_s3,
     mock_sns,
     mock_sqs,
@@ -24,7 +25,6 @@ from moto import (
 from moto import settings
 from moto.core import ACCOUNT_ID
 from moto.cloudformation import cloudformation_backends
-from .test_cloudformation_stack_crud import dummy_template_json2, dummy_template_json4
 
 from tests import EXAMPLE_AMI_ID
 
@@ -47,6 +47,12 @@ dummy_template = {
     },
 }
 
+dummy_template2 = {
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Stack 2",
+    "Resources": {},
+}
+
 dummy_template3 = {
     "AWSTemplateFormatVersion": "2010-09-09",
     "Description": "Stack 3",
@@ -55,6 +61,29 @@ dummy_template3 = {
     },
 }
 
+dummy_template4 = {
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Resources": {
+        "myDynamoDBTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+                "AttributeDefinitions": [
+                    {"AttributeName": "Name", "AttributeType": "S"},
+                    {"AttributeName": "Age", "AttributeType": "S"},
+                ],
+                "KeySchema": [
+                    {"AttributeName": "Name", "KeyType": "HASH"},
+                    {"AttributeName": "Age", "KeyType": "RANGE"},
+                ],
+                "ProvisionedThroughput": {
+                    "ReadCapacityUnits": 5,
+                    "WriteCapacityUnits": 5,
+                },
+                "TableName": "Person",
+            },
+        }
+    },
+}
 
 dummy_template_with_parameters = {
     "AWSTemplateFormatVersion": "2010-09-09",
@@ -110,6 +139,26 @@ Resources:
           Value: Test tag
         - Key: Name
           Value: Name tag for tests
+"""
+
+dummy_yaml_template_with_equals = """---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Stack with yaml template
+Conditions:
+  maybe:
+    Fn::Equals: [!Ref enabled, true]
+Parameters:
+  enabled:
+    Type: String
+    AllowedValues:
+     - true
+     - false
+Resources:
+  VPC1:
+    Type: AWS::EC2::VPC
+    Condition: maybe
+    Properties:
+      CidrBlock: 192.168.0.0/16
 """
 
 dummy_template_yaml_with_ref = """---
@@ -215,7 +264,7 @@ dummy_redrive_template = {
         },
         "DeadLetterQueue": {
             "Type": "AWS::SQS::Queue",
-            "Properties": {"FifoQueue": True},
+            "Properties": {"QueueName": "deadletterqueue.fifo", "FifoQueue": True},
         },
     },
 }
@@ -239,6 +288,14 @@ dummy_template_special_chars_in_description = {
     },
 }
 
+dummy_unknown_template = {
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Stack 1",
+    "Resources": {
+        "UnknownResource": {"Type": "AWS::Cloud9::EnvironmentEC2", "Properties": {}},
+    },
+}
+
 dummy_template_json = json.dumps(dummy_template)
 dummy_template_special_chars_in_description_json = json.dumps(
     dummy_template_special_chars_in_description
@@ -249,6 +306,9 @@ dummy_update_template_json = json.dumps(dummy_update_template)
 dummy_output_template_json = json.dumps(dummy_output_template)
 dummy_import_template_json = json.dumps(dummy_import_template)
 dummy_redrive_template_json = json.dumps(dummy_redrive_template)
+dummy_template_json2 = json.dumps(dummy_template2)
+dummy_template_json4 = json.dumps(dummy_template4)
+dummy_unknown_template_json = json.dumps(dummy_unknown_template)
 
 
 @mock_cloudformation
@@ -801,7 +861,7 @@ def test_boto3_describe_stack_set_params():
 def test_boto3_describe_stack_set_by_id():
     cf_conn = boto3.client("cloudformation", region_name="us-east-1")
     response = cf_conn.create_stack_set(
-        StackSetName="test_stack", TemplateBody=dummy_template_json,
+        StackSetName="test_stack", TemplateBody=dummy_template_json
     )
 
     stack_set_id = response["StackSetId"]
@@ -1140,14 +1200,12 @@ def test_boto3_update_stack_fail_update_same_template_body():
     ]
 
     cf_conn.create_stack(
-        StackName=name, TemplateBody=dummy_template_yaml_with_ref, Parameters=params,
+        StackName=name, TemplateBody=dummy_template_yaml_with_ref, Parameters=params
     )
 
     with pytest.raises(ClientError) as exp:
         cf_conn.update_stack(
-            StackName=name,
-            TemplateBody=dummy_template_yaml_with_ref,
-            Parameters=params,
+            StackName=name, TemplateBody=dummy_template_yaml_with_ref, Parameters=params
         )
     exp_err = exp.value.response.get("Error")
     exp_metadata = exp.value.response.get("ResponseMetadata")
@@ -1842,6 +1900,42 @@ def test_cloudformation_params_conditions_and_resources_are_distinct():
 
 
 @mock_cloudformation
+@mock_ec2
+def test_cloudformation_conditions_yaml_equals():
+    cf = boto3.client("cloudformation", region_name="us-east-1")
+    cf.create_stack(
+        StackName="teststack2",
+        TemplateBody=dummy_yaml_template_with_equals,
+        Parameters=[{"ParameterKey": "enabled", "ParameterValue": "true"}],
+    )
+    resources = cf.list_stack_resources(StackName="teststack2")[
+        "StackResourceSummaries"
+    ]
+    assert [
+        resource for resource in resources if resource["LogicalResourceId"] == "VPC1"
+    ]
+
+
+@mock_cloudformation
+@mock_ec2
+def test_cloudformation_conditions_yaml_equals_shortform():
+    _template = dummy_yaml_template_with_equals
+    _template = _template.replace("Fn::Equals:", "!Equals")
+    cf = boto3.client("cloudformation", region_name="us-east-1")
+    cf.create_stack(
+        StackName="teststack2",
+        TemplateBody=_template,
+        Parameters=[{"ParameterKey": "enabled", "ParameterValue": "true"}],
+    )
+    resources = cf.list_stack_resources(StackName="teststack2")[
+        "StackResourceSummaries"
+    ]
+    assert [
+        resource for resource in resources if resource["LogicalResourceId"] == "VPC1"
+    ]
+
+
+@mock_cloudformation
 def test_stack_tags():
     tags = [{"Key": "foo", "Value": "bar"}, {"Key": "baz", "Value": "bleh"}]
     cf = boto3.resource("cloudformation", region_name="us-east-1")
@@ -2013,17 +2107,13 @@ def test_non_json_redrive_policy():
 @mock_cloudformation
 def test_boto3_create_duplicate_stack():
     cf_conn = boto3.client("cloudformation", region_name="us-east-1")
-    cf_conn.create_stack(
-        StackName="test_stack", TemplateBody=dummy_template_json,
-    )
+    cf_conn.create_stack(StackName="test_stack", TemplateBody=dummy_template_json)
 
     with pytest.raises(ClientError):
-        cf_conn.create_stack(
-            StackName="test_stack", TemplateBody=dummy_template_json,
-        )
+        cf_conn.create_stack(StackName="test_stack", TemplateBody=dummy_template_json)
 
 
-@mock_dynamodb2
+@mock_dynamodb
 @mock_cloudformation
 def test_delete_stack_dynamo_template():
     conn = boto3.client("cloudformation", region_name="us-east-1")
@@ -2037,7 +2127,7 @@ def test_delete_stack_dynamo_template():
     conn.create_stack(StackName="test_stack", TemplateBody=dummy_template_json4)
 
 
-@mock_dynamodb2
+@mock_dynamodb
 @mock_cloudformation
 @mock_lambda
 def test_create_stack_lambda_and_dynamodb():
@@ -2096,7 +2186,7 @@ def test_create_stack_lambda_and_dynamodb():
     try:
         os.environ["VALIDATE_LAMBDA_S3"] = "false"
         cf.create_stack(
-            StackName="test_stack_lambda", TemplateBody=json.dumps(template),
+            StackName="test_stack_lambda", TemplateBody=json.dumps(template)
         )
     finally:
         os.environ["VALIDATE_LAMBDA_S3"] = validate_s3_before
@@ -2110,6 +2200,42 @@ def test_create_stack_lambda_and_dynamodb():
     resource_types.should.contain("AWS::Lambda::Version")
     resource_types.should.contain("AWS::DynamoDB::Table")
     resource_types.should.contain("AWS::Lambda::EventSourceMapping")
+
+
+@mock_cloudformation
+@mock_ec2
+def test_create_and_update_stack_with_unknown_resource():
+    cf_conn = boto3.client("cloudformation", region_name="us-east-1")
+    # Creating a stack with an unknown resource should throw a warning
+    expected_err = "Tried to parse AWS::Cloud9::EnvironmentEC2 but it's not supported by moto's CloudFormation implementation"
+    if settings.TEST_SERVER_MODE:
+        # Can't verify warnings in ServerMode though
+        cf_conn.create_stack(
+            StackName="test_stack", TemplateBody=dummy_unknown_template_json
+        )
+    else:
+        with pytest.warns(UserWarning, match=expected_err):
+            cf_conn.create_stack(
+                StackName="test_stack", TemplateBody=dummy_unknown_template_json
+            )
+
+    # The stack should exist though
+    stacks = cf_conn.describe_stacks()["Stacks"]
+    stacks.should.have.length_of(1)
+    stacks[0].should.have.key("StackName").equal("test_stack")
+
+    # Updating an unknown resource should throw a warning, but not fail
+    new_template = copy.deepcopy(dummy_unknown_template)
+    new_template["Resources"]["UnknownResource"]["Properties"]["Sth"] = "other"
+    if settings.TEST_SERVER_MODE:
+        cf_conn.update_stack(
+            StackName="test_stack", TemplateBody=json.dumps(new_template)
+        )
+    else:
+        with pytest.warns(UserWarning, match=expected_err):
+            cf_conn.update_stack(
+                StackName="test_stack", TemplateBody=json.dumps(new_template)
+            )
 
 
 def get_role_name():

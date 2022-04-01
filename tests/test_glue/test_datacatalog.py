@@ -91,6 +91,33 @@ def test_get_databases_several_items():
 
 
 @mock_glue
+def test_delete_database():
+    client = boto3.client("glue", region_name="us-east-1")
+    database_name_1, database_name_2 = "firstdatabase", "seconddatabase"
+
+    helpers.create_database(client, database_name_1, {"Name": database_name_1})
+    helpers.create_database(client, database_name_2, {"Name": database_name_2})
+
+    client.delete_database(Name=database_name_1)
+
+    database_list = sorted(
+        client.get_databases()["DatabaseList"], key=lambda x: x["Name"]
+    )
+    [db["Name"] for db in database_list].should.equal([database_name_2])
+
+
+@mock_glue
+def test_delete_unknown_database():
+    client = boto3.client("glue", region_name="us-east-1")
+
+    with pytest.raises(ClientError) as exc:
+        client.delete_database(Name="x")
+    err = exc.value.response["Error"]
+    err["Code"].should.equal("EntityNotFoundException")
+    err["Message"].should.equal("Database x not found.")
+
+
+@mock_glue
 def test_create_table():
     client = boto3.client("glue", region_name="us-east-1")
     database_name = "myspecialdatabase"
@@ -715,7 +742,7 @@ def test_batch_update_partition():
         )
 
     response = client.batch_update_partition(
-        DatabaseName=database_name, TableName=table_name, Entries=batch_update_values,
+        DatabaseName=database_name, TableName=table_name, Entries=batch_update_values
     )
 
     for value in values:
@@ -783,7 +810,7 @@ def test_batch_update_partition_missing_partition():
     )
 
     response = client.batch_update_partition(
-        DatabaseName=database_name, TableName=table_name, Entries=batch_update_values,
+        DatabaseName=database_name, TableName=table_name, Entries=batch_update_values
     )
 
     response.should.have.key("Errors")

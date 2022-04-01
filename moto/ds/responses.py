@@ -23,7 +23,7 @@ class DirectoryServiceResponse(BaseResponse):
         description = self._get_param("Description")
         size = self._get_param("Size")
         connect_settings = self._get_param("ConnectSettings")
-        tags = self._get_param("Tags")
+        tags = self._get_param("Tags", [])
         directory_id = self.ds_backend.connect_directory(
             region=self.region,
             name=name,
@@ -44,7 +44,7 @@ class DirectoryServiceResponse(BaseResponse):
         description = self._get_param("Description")
         size = self._get_param("Size")
         vpc_settings = self._get_param("VpcSettings")
-        tags = self._get_param("Tags")
+        tags = self._get_param("Tags", [])
         directory_id = self.ds_backend.create_directory(
             region=self.region,
             name=name,
@@ -72,7 +72,7 @@ class DirectoryServiceResponse(BaseResponse):
         description = self._get_param("Description")
         vpc_settings = self._get_param("VpcSettings")
         edition = self._get_param("Edition")
-        tags = self._get_param("Tags")
+        tags = self._get_param("Tags", [])
         directory_id = self.ds_backend.create_microsoft_ad(
             region=self.region,
             name=name,
@@ -97,13 +97,13 @@ class DirectoryServiceResponse(BaseResponse):
         next_token = self._get_param("NextToken")
         limit = self._get_int_param("Limit")
         try:
-            (descriptions, next_token) = self.ds_backend.describe_directories(
+            (directories, next_token) = self.ds_backend.describe_directories(
                 directory_ids, next_token=next_token, limit=limit
             )
         except InvalidToken as exc:
             raise InvalidNextTokenException() from exc
 
-        response = {"DirectoryDescriptions": [x.to_json() for x in descriptions]}
+        response = {"DirectoryDescriptions": [x.to_dict() for x in directories]}
         if next_token:
             response["NextToken"] = next_token
         return json.dumps(response)

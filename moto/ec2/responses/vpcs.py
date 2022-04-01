@@ -1,10 +1,10 @@
 from moto.core import ACCOUNT_ID
-from moto.core.responses import BaseResponse
 from moto.core.utils import camelcase_to_underscores
-from moto.ec2.utils import add_tag_specification, filters_from_querystring
+from moto.ec2.utils import add_tag_specification
+from ._base_response import EC2BaseResponse
 
 
-class VPCs(BaseResponse):
+class VPCs(EC2BaseResponse):
     def _get_doc_date(self):
         return (
             "2013-10-15"
@@ -41,7 +41,7 @@ class VPCs(BaseResponse):
     def describe_vpcs(self):
         self.error_on_dryrun()
         vpc_ids = self._get_multi_param("VpcId")
-        filters = filters_from_querystring(self.querystring)
+        filters = self._filters_from_querystring()
         vpcs = self.ec2_backend.describe_vpcs(vpc_ids=vpc_ids, filters=filters)
         doc_date = (
             "2013-10-15"
@@ -68,7 +68,7 @@ class VPCs(BaseResponse):
 
     def describe_vpc_classic_link_dns_support(self):
         vpc_ids = self._get_multi_param("VpcIds")
-        filters = filters_from_querystring(self.querystring)
+        filters = self._filters_from_querystring()
         vpcs = self.ec2_backend.describe_vpcs(vpc_ids=vpc_ids, filters=filters)
         doc_date = self._get_doc_date()
         template = self.response_template(
@@ -78,8 +78,8 @@ class VPCs(BaseResponse):
 
     def enable_vpc_classic_link_dns_support(self):
         vpc_id = self._get_param("VpcId")
-        classic_link_dns_supported = self.ec2_backend.enable_vpc_classic_link_dns_support(
-            vpc_id=vpc_id
+        classic_link_dns_supported = (
+            self.ec2_backend.enable_vpc_classic_link_dns_support(vpc_id=vpc_id)
         )
         doc_date = self._get_doc_date()
         template = self.response_template(ENABLE_VPC_CLASSIC_LINK_DNS_SUPPORT_RESPONSE)
@@ -89,8 +89,8 @@ class VPCs(BaseResponse):
 
     def disable_vpc_classic_link_dns_support(self):
         vpc_id = self._get_param("VpcId")
-        classic_link_dns_supported = self.ec2_backend.disable_vpc_classic_link_dns_support(
-            vpc_id=vpc_id
+        classic_link_dns_supported = (
+            self.ec2_backend.disable_vpc_classic_link_dns_support(vpc_id=vpc_id)
         )
         doc_date = self._get_doc_date()
         template = self.response_template(DISABLE_VPC_CLASSIC_LINK_DNS_SUPPORT_RESPONSE)
@@ -100,7 +100,7 @@ class VPCs(BaseResponse):
 
     def describe_vpc_classic_link(self):
         vpc_ids = self._get_multi_param("VpcId")
-        filters = filters_from_querystring(self.querystring)
+        filters = self._filters_from_querystring()
         vpcs = self.ec2_backend.describe_vpcs(vpc_ids=vpc_ids, filters=filters)
         doc_date = self._get_doc_date()
         template = self.response_template(DESCRIBE_VPC_CLASSIC_LINK_RESPONSE)
@@ -193,7 +193,7 @@ class VPCs(BaseResponse):
         vpc_end_point = self.ec2_backend.create_vpc_endpoint(
             vpc_id=vpc_id,
             service_name=service_name,
-            type=endpoint_type,
+            endpoint_type=endpoint_type,
             policy_document=policy_document,
             route_table_ids=route_table_ids,
             subnet_ids=subnet_ids,
@@ -219,7 +219,7 @@ class VPCs(BaseResponse):
 
     def describe_vpc_endpoints(self):
         vpc_end_points_ids = self._get_multi_param("VpcEndpointId")
-        filters = filters_from_querystring(self.querystring)
+        filters = self._filters_from_querystring()
         vpc_end_points = self.ec2_backend.describe_vpc_endpoints(
             vpc_end_point_ids=vpc_end_points_ids, filters=filters
         )
@@ -228,7 +228,7 @@ class VPCs(BaseResponse):
 
     def delete_vpc_endpoints(self):
         vpc_end_points_ids = self._get_multi_param("VpcEndpointId")
-        response = self.ec2_backend.delete_vpc_endpoints(vpce_ids=vpc_end_points_ids,)
+        response = self.ec2_backend.delete_vpc_endpoints(vpce_ids=vpc_end_points_ids)
         template = self.response_template(DELETE_VPC_ENDPOINT_RESPONSE)
         return template.render(response=response)
 
@@ -255,7 +255,7 @@ class VPCs(BaseResponse):
 
     def describe_managed_prefix_lists(self):
         prefix_list_ids = self._get_multi_param("PrefixListId")
-        filters = filters_from_querystring(self.querystring)
+        filters = self._filters_from_querystring()
         managed_prefix_lists = self.ec2_backend.describe_managed_prefix_lists(
             prefix_list_ids=prefix_list_ids, filters=filters
         )
@@ -266,7 +266,7 @@ class VPCs(BaseResponse):
         prefix_list_id = self._get_param("PrefixListId")
         target_version = self._get_param("TargetVersion")
         managed_prefix_list = self.ec2_backend.get_managed_prefix_list_entries(
-            prefix_list_id=prefix_list_id,
+            prefix_list_id=prefix_list_id
         )
         entries = []
         if managed_prefix_list:
@@ -291,7 +291,7 @@ class VPCs(BaseResponse):
 
     def describe_prefix_lists(self):
         prefix_list_ids = self._get_multi_param("PrefixListId")
-        filters = filters_from_querystring(self.querystring)
+        filters = self._filters_from_querystring()
         managed_pls = self.ec2_backend.describe_managed_prefix_lists(
             prefix_list_ids=prefix_list_ids, filters=filters
         )
@@ -669,7 +669,7 @@ DESCRIBE_VPC_ENDPOINT_RESPONSE = """<DescribeVpcEndpointsResponse xmlns="http://
                 <serviceName>{{ vpc_end_point.service_name }}</serviceName>
                 <vpcId>{{ vpc_end_point.vpc_id }}</vpcId>
                 <vpcEndpointId>{{ vpc_end_point.id }}</vpcEndpointId>
-                <vpcEndpointType>{{ vpc_end_point.type }}</vpcEndpointType>
+                <vpcEndpointType>{{ vpc_end_point.endpoint_type }}</vpcEndpointType>
                 {% if vpc_end_point.subnet_ids %}
                     <subnetIdSet>
                         {% for subnet_id in vpc_end_point.subnet_ids %}
@@ -691,13 +691,16 @@ DESCRIBE_VPC_ENDPOINT_RESPONSE = """<DescribeVpcEndpointsResponse xmlns="http://
                         {% endfor %}
                     </networkInterfaceIdSet>
                 {% endif %}
-                {% if vpc_end_point.dns_entries %}
-                    <dnsEntries>
-                        {% for dns_entry in vpc_end_point.dns_entries %}
-                            <item>{{ dns_entry }}</item>
-                        {% endfor %}
-                    </dnsEntries>
+                <dnsEntrySet>
+                {% if vpc_end_point.dns_entries  %}
+                    {% for entry in vpc_end_point.dns_entries %}
+                    <item>
+                        <hostedZoneId>{{ entry["hosted_zone_id"] }}</hostedZoneId>
+                        <dnsName>{{ entry["dns_name"] }}</dnsName>
+                    </item>
+                    {% endfor %}
                 {% endif %}
+                </dnsEntrySet>
                 {% if vpc_end_point.security_group_ids %}
                     <groupSet>
                         {% for group_id in vpc_end_point.security_group_ids %}

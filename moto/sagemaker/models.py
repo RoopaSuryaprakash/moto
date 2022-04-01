@@ -1,10 +1,11 @@
 import json
 import os
-from boto3 import Session
 from datetime import datetime
 from moto.core import ACCOUNT_ID, BaseBackend, BaseModel, CloudFormationModel
 from moto.core.exceptions import RESTError
+from moto.core.utils import BackendDict
 from moto.sagemaker import validators
+from moto.utilities.paginator import paginate
 from .exceptions import (
     MissingModel,
     ValidationError,
@@ -13,10 +14,35 @@ from .exceptions import (
 )
 
 
+PAGINATION_MODEL = {
+    "list_experiments": {
+        "input_token": "NextToken",
+        "limit_key": "MaxResults",
+        "limit_default": 100,
+        "unique_attribute": "experiment_arn",
+        "fail_on_invalid_token": True,
+    },
+    "list_trials": {
+        "input_token": "NextToken",
+        "limit_key": "MaxResults",
+        "limit_default": 100,
+        "unique_attribute": "trial_arn",
+        "fail_on_invalid_token": True,
+    },
+    "list_trial_components": {
+        "input_token": "NextToken",
+        "limit_key": "MaxResults",
+        "limit_default": 100,
+        "unique_attribute": "trial_component_arn",
+        "fail_on_invalid_token": True,
+    },
+}
+
+
 class BaseObject(BaseModel):
     def camelCase(self, key):
         words = []
-        for i, word in enumerate(key.split("_")):
+        for word in key.split("_"):
             words.append(word.title())
         return "".join(words)
 
@@ -37,6 +63,61 @@ class BaseObject(BaseModel):
     @property
     def response_object(self):
         return self.gen_response_object()
+
+
+class FakeProcessingJob(BaseObject):
+    def __init__(
+        self,
+        app_specification,
+        experiment_config,
+        network_config,
+        processing_inputs,
+        processing_job_name,
+        processing_output_config,
+        region_name,
+        role_arn,
+        stopping_condition,
+    ):
+        self.processing_job_name = processing_job_name
+        self.processing_job_arn = FakeProcessingJob.arn_formatter(
+            processing_job_name, region_name
+        )
+
+        now_string = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.creation_time = now_string
+        self.last_modified_time = now_string
+        self.processing_end_time = now_string
+
+        self.role_arn = role_arn
+        self.app_specification = app_specification
+        self.experiment_config = experiment_config
+        self.network_config = network_config
+        self.processing_inputs = processing_inputs
+        self.processing_job_status = "Completed"
+        self.processing_output_config = processing_output_config
+        self.stopping_condition = stopping_condition
+
+    @property
+    def response_object(self):
+        response_object = self.gen_response_object()
+        return {
+            k: v for k, v in response_object.items() if v is not None and v != [None]
+        }
+
+    @property
+    def response_create(self):
+        return {"ProcessingJobArn": self.processing_job_arn}
+
+    @staticmethod
+    def arn_formatter(endpoint_name, region_name):
+        return (
+            "arn:aws:sagemaker:"
+            + region_name
+            + ":"
+            + str(ACCOUNT_ID)
+            + ":processing-job/"
+            + endpoint_name
+        )
 
 
 class FakeTrainingJob(BaseObject):
@@ -197,8 +278,8 @@ class FakeEndpoint(BaseObject, CloudFormationModel):
         return self.endpoint_arn
 
     @classmethod
-    def has_cfn_attr(cls, attribute):
-        return attribute in ["EndpointName"]
+    def has_cfn_attr(cls, attr):
+        return attr in ["EndpointName"]
 
     def get_cfn_attribute(self, attribute_name):
         # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sagemaker-endpoint.html#aws-resource-sagemaker-endpoint-return-values
@@ -236,7 +317,7 @@ class FakeEndpoint(BaseObject, CloudFormationModel):
 
     @classmethod
     def update_from_cloudformation_json(
-        cls, original_resource, new_resource_name, cloudformation_json, region_name,
+        cls, original_resource, new_resource_name, cloudformation_json, region_name
     ):
         # Changes to the Endpoint will not change resource name
         cls.delete_from_cloudformation_json(
@@ -387,8 +468,8 @@ class FakeEndpointConfig(BaseObject, CloudFormationModel):
         return self.endpoint_config_arn
 
     @classmethod
-    def has_cfn_attr(cls, attribute):
-        return attribute in ["EndpointConfigName"]
+    def has_cfn_attr(cls, attr):
+        return attr in ["EndpointConfigName"]
 
     def get_cfn_attribute(self, attribute_name):
         # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sagemaker-endpointconfig.html#aws-resource-sagemaker-endpointconfig-return-values
@@ -428,7 +509,7 @@ class FakeEndpointConfig(BaseObject, CloudFormationModel):
 
     @classmethod
     def update_from_cloudformation_json(
-        cls, original_resource, new_resource_name, cloudformation_json, region_name,
+        cls, original_resource, new_resource_name, cloudformation_json, region_name
     ):
         # Most changes to the endpoint config will change resource name for EndpointConfigs
         cls.delete_from_cloudformation_json(
@@ -459,13 +540,13 @@ class Model(BaseObject, CloudFormationModel):
         execution_role_arn,
         primary_container,
         vpc_config,
-        containers=[],
-        tags=[],
+        containers=None,
+        tags=None,
     ):
         self.model_name = model_name
         self.creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.containers = containers
-        self.tags = tags
+        self.containers = containers or []
+        self.tags = tags or []
         self.enable_network_isolation = False
         self.vpc_config = vpc_config
         self.primary_container = primary_container
@@ -499,8 +580,8 @@ class Model(BaseObject, CloudFormationModel):
         return self.model_arn
 
     @classmethod
-    def has_cfn_attr(cls, attribute):
-        return attribute in ["ModelName"]
+    def has_cfn_attr(cls, attr):
+        return attr in ["ModelName"]
 
     def get_cfn_attribute(self, attribute_name):
         # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sagemaker-model.html#aws-resource-sagemaker-model-return-values
@@ -542,7 +623,7 @@ class Model(BaseObject, CloudFormationModel):
 
     @classmethod
     def update_from_cloudformation_json(
-        cls, original_resource, new_resource_name, cloudformation_json, region_name,
+        cls, original_resource, new_resource_name, cloudformation_json, region_name
     ):
         # Most changes to the model will change resource name for Models
         cls.delete_from_cloudformation_json(
@@ -719,8 +800,8 @@ class FakeSagemakerNotebookInstance(CloudFormationModel):
         return self.arn
 
     @classmethod
-    def has_cfn_attr(cls, attribute):
-        return attribute in ["NotebookInstanceName"]
+    def has_cfn_attr(cls, attr):
+        return attr in ["NotebookInstanceName"]
 
     def get_cfn_attribute(self, attribute_name):
         # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sagemaker-notebookinstance.html#aws-resource-sagemaker-notebookinstance-return-values
@@ -757,7 +838,7 @@ class FakeSagemakerNotebookInstance(CloudFormationModel):
 
     @classmethod
     def update_from_cloudformation_json(
-        cls, original_resource, new_resource_name, cloudformation_json, region_name,
+        cls, original_resource, new_resource_name, cloudformation_json, region_name
     ):
         # Operations keep same resource name so delete old and create new to mimic update
         cls.delete_from_cloudformation_json(
@@ -795,8 +876,10 @@ class FakeSageMakerNotebookInstanceLifecycleConfig(BaseObject, CloudFormationMod
         self.creation_time = self.last_modified_time = datetime.now().strftime(
             "%Y-%m-%d %H:%M:%S"
         )
-        self.notebook_instance_lifecycle_config_arn = FakeSageMakerNotebookInstanceLifecycleConfig.arn_formatter(
-            self.notebook_instance_lifecycle_config_name, self.region_name
+        self.notebook_instance_lifecycle_config_arn = (
+            FakeSageMakerNotebookInstanceLifecycleConfig.arn_formatter(
+                self.notebook_instance_lifecycle_config_name, self.region_name
+            )
         )
 
     @staticmethod
@@ -826,8 +909,8 @@ class FakeSageMakerNotebookInstanceLifecycleConfig(BaseObject, CloudFormationMod
         return self.notebook_instance_lifecycle_config_arn
 
     @classmethod
-    def has_cfn_attr(cls, attribute):
-        return attribute in ["NotebookInstanceLifecycleConfigName"]
+    def has_cfn_attr(cls, attr):
+        return attr in ["NotebookInstanceLifecycleConfigName"]
 
     def get_cfn_attribute(self, attribute_name):
         # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sagemaker-notebookinstancelifecycleconfig.html#aws-resource-sagemaker-notebookinstancelifecycleconfig-return-values
@@ -863,7 +946,7 @@ class FakeSageMakerNotebookInstanceLifecycleConfig(BaseObject, CloudFormationMod
 
     @classmethod
     def update_from_cloudformation_json(
-        cls, original_resource, new_resource_name, cloudformation_json, region_name,
+        cls, original_resource, new_resource_name, cloudformation_json, region_name
     ):
         # Operations keep same resource name so delete old and create new to mimic update
         cls.delete_from_cloudformation_json(
@@ -898,6 +981,7 @@ class SageMakerModelBackend(BaseBackend):
         self.endpoint_configs = {}
         self.endpoints = {}
         self.experiments = {}
+        self.processing_jobs = {}
         self.trials = {}
         self.trial_components = {}
         self.training_jobs = {}
@@ -1057,25 +1141,9 @@ class SageMakerModelBackend(BaseBackend):
             tag for tag in trial_component.tags if tag["Key"] not in tag_keys
         ]
 
+    @paginate(pagination_model=PAGINATION_MODEL)
     def list_experiments(self):
-        next_index = None
-
-        experiments_fetched = list(self.experiments.values())
-
-        experiment_summaries = [
-            {
-                "ExperimentName": experiment_data.experiment_name,
-                "ExperimentArn": experiment_data.experiment_arn,
-                "CreationTime": experiment_data.creation_time,
-                "LastModifiedTime": experiment_data.last_modified_time,
-            }
-            for experiment_data in experiments_fetched
-        ]
-
-        return {
-            "ExperimentSummaries": experiment_summaries,
-            "NextToken": str(next_index) if next_index is not None else None,
-        }
+        return list(self.experiments.values())
 
     def search(self, resource=None, search_expression=None):
         next_index = None
@@ -1231,9 +1299,7 @@ class SageMakerModelBackend(BaseBackend):
         except RESTError:
             return []
 
-    def create_trial(
-        self, trial_name, experiment_name,
-    ):
+    def create_trial(self, trial_name, experiment_name):
         trial = FakeTrial(
             region_name=self.region_name,
             trial_name=trial_name,
@@ -1276,9 +1342,8 @@ class SageMakerModelBackend(BaseBackend):
         except RESTError:
             return []
 
+    @paginate(pagination_model=PAGINATION_MODEL)
     def list_trials(self, experiment_name=None, trial_component_name=None):
-        next_index = None
-
         trials_fetched = list(self.trials.values())
 
         def evaluate_filter_expression(trial_data):
@@ -1292,25 +1357,13 @@ class SageMakerModelBackend(BaseBackend):
 
             return True
 
-        trial_summaries = [
-            {
-                "TrialName": trial_data.trial_name,
-                "TrialArn": trial_data.trial_arn,
-                "CreationTime": trial_data.creation_time,
-                "LastModifiedTime": trial_data.last_modified_time,
-            }
+        return [
+            trial_data
             for trial_data in trials_fetched
             if evaluate_filter_expression(trial_data)
         ]
 
-        return {
-            "TrialSummaries": trial_summaries,
-            "NextToken": str(next_index) if next_index is not None else None,
-        }
-
-    def create_trial_component(
-        self, trial_component_name, trial_name,
-    ):
+    def create_trial_component(self, trial_component_name, trial_name):
         trial_component = FakeTrialComponent(
             region_name=self.region_name,
             trial_component_name=trial_component_name,
@@ -1359,26 +1412,15 @@ class SageMakerModelBackend(BaseBackend):
     def _update_trial_component_details(self, trial_component_name, details_json):
         self.trial_components[trial_component_name].update(details_json)
 
+    @paginate(pagination_model=PAGINATION_MODEL)
     def list_trial_components(self, trial_name=None):
-        next_index = None
-
         trial_components_fetched = list(self.trial_components.values())
 
-        trial_component_summaries = [
-            {
-                "TrialComponentName": trial_component_data.trial_component_name,
-                "TrialComponentArn": trial_component_data.trial_component_arn,
-                "CreationTime": trial_component_data.creation_time,
-                "LastModifiedTime": trial_component_data.last_modified_time,
-            }
+        return [
+            trial_component_data
             for trial_component_data in trial_components_fetched
             if trial_name is None or trial_component_data.trial_name == trial_name
         ]
-
-        return {
-            "TrialComponentSummaries": trial_component_summaries,
-            "NextToken": str(next_index) if next_index is not None else None,
-        }
 
     def associate_trial_component(self, params):
         trial_name = params["TrialName"]
@@ -1613,9 +1655,7 @@ class SageMakerModelBackend(BaseBackend):
             )
             raise ValidationError(message=message)
 
-    def create_endpoint(
-        self, endpoint_name, endpoint_config_name, tags,
-    ):
+    def create_endpoint(self, endpoint_name, endpoint_config_name, tags):
         try:
             endpoint_config = self.describe_endpoint_config(endpoint_config_name)
         except KeyError:
@@ -1671,6 +1711,125 @@ class SageMakerModelBackend(BaseBackend):
             return endpoint.tags or []
         except RESTError:
             return []
+
+    def create_processing_job(
+        self,
+        app_specification,
+        experiment_config,
+        network_config,
+        processing_inputs,
+        processing_job_name,
+        processing_output_config,
+        role_arn,
+        stopping_condition,
+    ):
+        processing_job = FakeProcessingJob(
+            app_specification=app_specification,
+            experiment_config=experiment_config,
+            network_config=network_config,
+            processing_inputs=processing_inputs,
+            processing_job_name=processing_job_name,
+            processing_output_config=processing_output_config,
+            region_name=self.region_name,
+            role_arn=role_arn,
+            stopping_condition=stopping_condition,
+        )
+        self.processing_jobs[processing_job_name] = processing_job
+        return processing_job
+
+    def describe_processing_job(self, processing_job_name):
+        try:
+            return self.processing_jobs[processing_job_name].response_object
+        except KeyError:
+            message = "Could not find processing job '{}'.".format(
+                FakeProcessingJob.arn_formatter(processing_job_name, self.region_name)
+            )
+            raise ValidationError(message=message)
+
+    def list_processing_jobs(
+        self,
+        next_token,
+        max_results,
+        creation_time_after,
+        creation_time_before,
+        last_modified_time_after,
+        last_modified_time_before,
+        name_contains,
+        status_equals,
+    ):
+        if next_token:
+            try:
+                starting_index = int(next_token)
+                if starting_index > len(self.processing_jobs):
+                    raise ValueError  # invalid next_token
+            except ValueError:
+                raise AWSValidationException('Invalid pagination token because "{0}".')
+        else:
+            starting_index = 0
+
+        if max_results:
+            end_index = max_results + starting_index
+            processing_jobs_fetched = list(self.processing_jobs.values())[
+                starting_index:end_index
+            ]
+            if end_index >= len(self.processing_jobs):
+                next_index = None
+            else:
+                next_index = end_index
+        else:
+            processing_jobs_fetched = list(self.processing_jobs.values())
+            next_index = None
+
+        if name_contains is not None:
+            processing_jobs_fetched = filter(
+                lambda x: name_contains in x.processing_job_name,
+                processing_jobs_fetched,
+            )
+
+        if creation_time_after is not None:
+            processing_jobs_fetched = filter(
+                lambda x: x.creation_time > creation_time_after, processing_jobs_fetched
+            )
+
+        if creation_time_before is not None:
+            processing_jobs_fetched = filter(
+                lambda x: x.creation_time < creation_time_before,
+                processing_jobs_fetched,
+            )
+
+        if last_modified_time_after is not None:
+            processing_jobs_fetched = filter(
+                lambda x: x.last_modified_time > last_modified_time_after,
+                processing_jobs_fetched,
+            )
+
+        if last_modified_time_before is not None:
+            processing_jobs_fetched = filter(
+                lambda x: x.last_modified_time < last_modified_time_before,
+                processing_jobs_fetched,
+            )
+        if status_equals is not None:
+            processing_jobs_fetched = filter(
+                lambda x: x.training_job_status == status_equals,
+                processing_jobs_fetched,
+            )
+
+        processing_job_summaries = [
+            {
+                "ProcessingJobName": processing_job_data.processing_job_name,
+                "ProcessingJobArn": processing_job_data.processing_job_arn,
+                "CreationTime": processing_job_data.creation_time,
+                "ProcessingEndTime": processing_job_data.processing_end_time,
+                "LastModifiedTime": processing_job_data.last_modified_time,
+                "ProcessingJobStatus": processing_job_data.processing_job_status,
+            }
+            for processing_job_data in processing_jobs_fetched
+        ]
+
+        return {
+            "ProcessingJobSummaries": processing_job_summaries,
+            "NextToken": str(next_index) if next_index is not None else None,
+        }
 
     def create_training_job(
         self,
@@ -1765,8 +1924,6 @@ class SageMakerModelBackend(BaseBackend):
         last_modified_time_before,
         name_contains,
         status_equals,
-        sort_by,
-        sort_order,
     ):
         if next_token:
             try:
@@ -1841,9 +1998,7 @@ class SageMakerModelBackend(BaseBackend):
 
 
 class FakeExperiment(BaseObject):
-    def __init__(
-        self, region_name, experiment_name, tags,
-    ):
+    def __init__(self, region_name, experiment_name, tags):
         self.experiment_name = experiment_name
         self.experiment_arn = FakeExperiment.arn_formatter(experiment_name, region_name)
         self.tags = tags
@@ -1876,7 +2031,7 @@ class FakeExperiment(BaseObject):
 
 class FakeTrial(BaseObject):
     def __init__(
-        self, region_name, trial_name, experiment_name, tags, trial_components,
+        self, region_name, trial_name, experiment_name, tags, trial_components
     ):
         self.trial_name = trial_name
         self.trial_arn = FakeTrial.arn_formatter(trial_name, region_name)
@@ -1911,9 +2066,7 @@ class FakeTrial(BaseObject):
 
 
 class FakeTrialComponent(BaseObject):
-    def __init__(
-        self, region_name, trial_component_name, trial_name, tags,
-    ):
+    def __init__(self, region_name, trial_component_name, trial_name, tags):
         self.trial_component_name = trial_component_name
         self.trial_component_arn = FakeTrialComponent.arn_formatter(
             trial_component_name, region_name
@@ -1946,10 +2099,4 @@ class FakeTrialComponent(BaseObject):
         )
 
 
-sagemaker_backends = {}
-for region in Session().get_available_regions("sagemaker"):
-    sagemaker_backends[region] = SageMakerModelBackend(region)
-for region in Session().get_available_regions("sagemaker", partition_name="aws-us-gov"):
-    sagemaker_backends[region] = SageMakerModelBackend(region)
-for region in Session().get_available_regions("sagemaker", partition_name="aws-cn"):
-    sagemaker_backends[region] = SageMakerModelBackend(region)
+sagemaker_backends = BackendDict(SageMakerModelBackend, "sagemaker")

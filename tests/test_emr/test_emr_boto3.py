@@ -116,6 +116,7 @@ def test_describe_cluster():
     }
     args["Tags"] = [{"Key": "tag1", "Value": "val1"}, {"Key": "tag2", "Value": "val2"}]
     args["SecurityConfiguration"] = "my-security-configuration"
+    args["AutoScalingRole"] = "EMR_AutoScaling_DefaultRole"
 
     cluster_id = client.run_job_flow(**args)["JobFlowId"]
 
@@ -164,6 +165,7 @@ def test_describe_cluster():
     cl["SecurityConfiguration"].should.be.a(str)
     cl["SecurityConfiguration"].should.equal(args["SecurityConfiguration"])
     cl["ServiceRole"].should.equal(args["ServiceRole"])
+    cl["AutoScalingRole"].should.equal(args["AutoScalingRole"])
 
     status = cl["Status"]
     status["State"].should.equal("TERMINATED")
@@ -188,13 +190,10 @@ def test_describe_cluster():
 @mock_emr
 def test_describe_cluster_not_found():
     conn = boto3.client("emr", region_name="us-east-1")
-    raised = False
-    try:
+    with pytest.raises(ClientError) as e:
         conn.describe_cluster(ClusterId="DummyId")
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            raised = True
-    raised.should.equal(True)
+
+    assert e.value.response["Error"]["Code"] == "ResourceNotFoundException"
 
 
 @mock_emr
@@ -545,8 +544,10 @@ def test_run_job_flow_with_instance_groups_with_autoscaling():
         if "AutoScalingPolicy" in y:
             x["AutoScalingPolicy"]["Status"]["State"].should.equal("ATTACHED")
             returned_policy = deepcopy(x["AutoScalingPolicy"])
-            auto_scaling_policy_with_cluster_id = _patch_cluster_id_placeholder_in_autoscaling_policy(
-                y["AutoScalingPolicy"], cluster_id
+            auto_scaling_policy_with_cluster_id = (
+                _patch_cluster_id_placeholder_in_autoscaling_policy(
+                    y["AutoScalingPolicy"], cluster_id
+                )
             )
             del returned_policy["Status"]
             returned_policy.should.equal(auto_scaling_policy_with_cluster_id)
@@ -572,8 +573,10 @@ def test_put_remove_auto_scaling_policy():
         AutoScalingPolicy=auto_scaling_policy,
     )
 
-    auto_scaling_policy_with_cluster_id = _patch_cluster_id_placeholder_in_autoscaling_policy(
-        auto_scaling_policy, cluster_id
+    auto_scaling_policy_with_cluster_id = (
+        _patch_cluster_id_placeholder_in_autoscaling_policy(
+            auto_scaling_policy, cluster_id
+        )
     )
     del resp["AutoScalingPolicy"]["Status"]
     resp["AutoScalingPolicy"].should.equal(auto_scaling_policy_with_cluster_id)
@@ -714,9 +717,7 @@ def test_terminate_protected_job_flow_raises_error():
         JobFlowIds=[cluster_id], TerminationProtected=True
     )
     with pytest.raises(ClientError) as ex:
-        client.terminate_job_flows(
-            JobFlowIds=[cluster_id,]
-        )
+        client.terminate_job_flows(JobFlowIds=[cluster_id])
     error = ex.value.response["Error"]
     error["Code"].should.equal("ValidationException")
     error["Message"].should.equal(
@@ -1012,6 +1013,10 @@ def test_steps():
 
     steps = client.list_steps(ClusterId=cluster_id)["Steps"]
     steps.should.have.length_of(2)
+    # Steps should be returned in reverse order.
+    sorted(
+        steps, key=lambda o: o["Status"]["Timeline"]["CreationDateTime"], reverse=True
+    ).should.equal(steps)
     for x in steps:
         y = expected[x["Name"]]
         x["ActionOnFailure"].should.equal("TERMINATE_CLUSTER")
@@ -1043,7 +1048,7 @@ def test_steps():
         # x['Status']['Timeline']['EndDateTime'].should.be.a('datetime.datetime')
         # x['Status']['Timeline']['StartDateTime'].should.be.a('datetime.datetime')
 
-    step_id = steps[0]["Id"]
+    step_id = steps[-1]["Id"]  # Last step is first created step.
     steps = client.list_steps(ClusterId=cluster_id, StepIds=[step_id])["Steps"]
     steps.should.have.length_of(1)
     steps[0]["Id"].should.equal(step_id)

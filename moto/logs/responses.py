@@ -9,6 +9,9 @@ from .models import logs_backends
 # See http://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/Welcome.html
 
 
+REGEX_LOG_GROUP_NAME = r"[-._\/#A-Za-z0-9]+"
+
+
 def validate_param(
     param_name, param_value, constraint, constraint_expression, pattern=None
 ):
@@ -16,11 +19,11 @@ def validate_param(
         assert constraint_expression(param_value)
     except (AssertionError, TypeError):
         raise InvalidParameterException(
-            constraint=constraint, parameter=param_name, value=param_value,
+            constraint=constraint, parameter=param_name, value=param_value
         )
     if pattern and param_value:
         try:
-            assert re.match(pattern, param_value)
+            assert re.fullmatch(pattern, param_value)
         except (AssertionError, TypeError):
             raise InvalidParameterException(
                 constraint=f"Must match pattern: {pattern}",
@@ -41,8 +44,8 @@ class LogsResponse(BaseResponse):
         except ValueError:
             return {}
 
-    def _get_param(self, param, if_none=None):
-        return self.request_params.get(param, if_none)
+    def _get_param(self, param_name, if_none=None):
+        return self.request_params.get(param_name, if_none)
 
     def _get_validated_param(
         self, param, constraint, constraint_expression, pattern=None
@@ -67,7 +70,7 @@ class LogsResponse(BaseResponse):
             "logGroupName",
             "Minimum length of 1. Maximum length of 512.",
             lambda x: 1 <= len(x) <= 512,
-            pattern="[.-_/#A-Za-z0-9]+",
+            pattern=REGEX_LOG_GROUP_NAME,
         )
         metric_transformations = self._get_validated_param(
             "metricTransformations", "Fixed number of 1 item.", lambda x: len(x) == 1
@@ -90,7 +93,7 @@ class LogsResponse(BaseResponse):
             "logGroupName",
             "Minimum length of 1. Maximum length of 512",
             lambda x: x is None or 1 <= len(x) <= 512,
-            pattern="[.-_/#A-Za-z0-9]+",
+            pattern=REGEX_LOG_GROUP_NAME,
         )
         metric_name = self._get_validated_param(
             "metricName",
@@ -139,7 +142,7 @@ class LogsResponse(BaseResponse):
             "logGroupName",
             "Minimum length of 1. Maximum length of 512.",
             lambda x: 1 <= len(x) <= 512,
-            pattern="[.-_/#A-Za-z0-9]+$",
+            pattern=REGEX_LOG_GROUP_NAME,
         )
 
         self.logs_backend.delete_metric_filter(filter_name, log_group_name)
@@ -212,12 +215,19 @@ class LogsResponse(BaseResponse):
         log_group_name = self._get_param("logGroupName")
         log_stream_name = self._get_param("logStreamName")
         log_events = self._get_param("logEvents")
-        sequence_token = self._get_param("sequenceToken")
 
-        next_sequence_token = self.logs_backend.put_log_events(
-            log_group_name, log_stream_name, log_events, sequence_token
+        next_sequence_token, rejected_info = self.logs_backend.put_log_events(
+            log_group_name, log_stream_name, log_events
         )
-        return json.dumps({"nextSequenceToken": next_sequence_token})
+        if rejected_info:
+            return json.dumps(
+                {
+                    "nextSequenceToken": next_sequence_token,
+                    "rejectedLogEventsInfo": rejected_info,
+                }
+            )
+        else:
+            return json.dumps({"nextSequenceToken": next_sequence_token})
 
     def get_log_events(self):
         log_group_name = self._get_param("logGroupName")
@@ -371,3 +381,11 @@ class LogsResponse(BaseResponse):
         )
 
         return json.dumps({"queryId": "{0}".format(query_id)})
+
+    def create_export_task(self):
+        log_group_name = self._get_param("logGroupName")
+        destination = self._get_param("destination")
+        task_id = self.logs_backend.create_export_task(
+            log_group_name=log_group_name, destination=destination
+        )
+        return json.dumps(dict(taskId=str(task_id)))

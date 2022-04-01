@@ -14,39 +14,41 @@ import collections.abc as collections_abc
 # the subclass's module hasn't been imported yet - then that subclass
 # doesn't exist yet, and __subclasses__ won't find it.
 # So we import here to populate the list of subclasses.
-from moto.apigateway import models as apigateway_models  # noqa
-from moto.autoscaling import models as autoscaling_models  # noqa
-from moto.awslambda import models as awslambda_models  # noqa
-from moto.batch import models as batch_models  # noqa
+from moto.apigateway import models  # noqa  # pylint: disable=all
+from moto.autoscaling import models  # noqa  # pylint: disable=all
+from moto.awslambda import models  # noqa  # pylint: disable=all
+from moto.batch import models  # noqa  # pylint: disable=all
 from moto.cloudformation.custom_model import CustomModel
-from moto.cloudwatch import models as cloudwatch_models  # noqa
-from moto.datapipeline import models as datapipeline_models  # noqa
-from moto.dynamodb2 import models as dynamodb2_models  # noqa
+from moto.cloudwatch import models  # noqa  # pylint: disable=all
+from moto.datapipeline import models  # noqa  # pylint: disable=all
+from moto.dynamodb import models  # noqa  # pylint: disable=all
 from moto.ec2 import models as ec2_models
-from moto.ecr import models as ecr_models  # noqa
-from moto.ecs import models as ecs_models  # noqa
-from moto.efs import models as efs_models  # noqa
-from moto.elb import models as elb_models  # noqa
-from moto.elbv2 import models as elbv2_models  # noqa
-from moto.events import models as events_models  # noqa
-from moto.iam import models as iam_models  # noqa
-from moto.kinesis import models as kinesis_models  # noqa
-from moto.kms import models as kms_models  # noqa
-from moto.rds import models as rds_models  # noqa
-from moto.rds2 import models as rds2_models  # noqa
-from moto.redshift import models as redshift_models  # noqa
-from moto.route53 import models as route53_models  # noqa
-from moto.s3 import models as s3_models, s3_backend  # noqa
-from moto.s3.utils import bucket_and_name_from_url
-from moto.sagemaker import models as sagemaker_models  # noqa
-from moto.sns import models as sns_models  # noqa
-from moto.sqs import models as sqs_models  # noqa
-from moto.stepfunctions import models as stepfunctions_models  # noqa
-from moto.ssm import models as ssm_models, ssm_backends  # noqa
+from moto.ecr import models  # noqa  # pylint: disable=all
+from moto.ecs import models  # noqa  # pylint: disable=all
+from moto.efs import models  # noqa  # pylint: disable=all
+from moto.elb import models  # noqa  # pylint: disable=all
+from moto.elbv2 import models  # noqa  # pylint: disable=all
+from moto.events import models  # noqa  # pylint: disable=all
+from moto.iam import models  # noqa  # pylint: disable=all
+from moto.kinesis import models  # noqa  # pylint: disable=all
+from moto.kms import models  # noqa  # pylint: disable=all
+from moto.rds import models  # noqa  # pylint: disable=all
+from moto.rds import models  # noqa  # pylint: disable=all
+from moto.redshift import models  # noqa  # pylint: disable=all
+from moto.route53 import models  # noqa  # pylint: disable=all
+from moto.s3 import models  # noqa  # pylint: disable=all
+from moto.sagemaker import models  # noqa  # pylint: disable=all
+from moto.sns import models  # noqa  # pylint: disable=all
+from moto.sqs import models  # noqa  # pylint: disable=all
+from moto.stepfunctions import models  # noqa  # pylint: disable=all
+from moto.ssm import models  # noqa  # pylint: disable=all
 
 # End ugly list of imports
 
 from moto.core import ACCOUNT_ID, CloudFormationModel
+from moto.s3 import s3_backend
+from moto.s3.utils import bucket_and_name_from_url
+from moto.ssm import ssm_backends
 from .utils import random_suffix
 from .exceptions import (
     ExportNotFound,
@@ -55,7 +57,6 @@ from .exceptions import (
     ValidationError,
     UnsupportedAttribute,
 )
-from moto.packages.boto.cloudformation.stack import Output
 
 # List of supported CloudFormation models
 MODEL_LIST = CloudFormationModel.__subclasses__()
@@ -74,6 +75,17 @@ NULL_MODELS = [
 DEFAULT_REGION = "us-east-1"
 
 logger = logging.getLogger("moto")
+
+
+class Output(object):
+    def __init__(self, connection=None):
+        self.connection = connection
+        self.description = None
+        self.key = None
+        self.value = None
+
+    def __repr__(self):
+        return 'Output:"%s"="%s"' % (self.key, self.value)
 
 
 class LazyDict(dict):
@@ -260,9 +272,7 @@ def generate_resource_name(resource_type, stack_name, logical_id):
         return "{0}-{1}-{2}".format(stack_name, logical_id, random_suffix())
 
 
-def parse_resource(
-    resource_json, resources_map,
-):
+def parse_resource(resource_json, resources_map):
     resource_type = resource_json["Type"]
     resource_class = resource_class_from_type(resource_type)
     if not resource_class:
@@ -281,9 +291,7 @@ def parse_resource(
     return resource_class, resource_json, resource_type
 
 
-def parse_resource_and_generate_name(
-    logical_id, resource_json, resources_map,
-):
+def parse_resource_and_generate_name(logical_id, resource_json, resources_map):
     resource_tuple = parse_resource(resource_json, resources_map)
     if not resource_tuple:
         return None
@@ -335,9 +343,12 @@ def parse_and_create_resource(logical_id, resource_json, resources_map, region_n
 
 
 def parse_and_update_resource(logical_id, resource_json, resources_map, region_name):
-    resource_class, resource_json, new_resource_name = parse_resource_and_generate_name(
+    resource_tuple = parse_resource_and_generate_name(
         logical_id, resource_json, resources_map
     )
+    if not resource_tuple:
+        return None
+    resource_class, resource_json, new_resource_name = resource_tuple
     original_resource = resources_map[logical_id]
     if not hasattr(
         resource_class.update_from_cloudformation_json, "__isabstractmethod__"
@@ -375,12 +386,14 @@ def parse_condition(condition, resources_map, condition_map):
     condition_values = []
     for value in list(condition.values())[0]:
         # Check if we are referencing another Condition
-        if "Condition" in value:
+        if isinstance(value, dict) and "Condition" in value:
             condition_values.append(condition_map[value["Condition"]])
         else:
             condition_values.append(clean_json(value, resources_map))
 
     if condition_operator == "Fn::Equals":
+        if condition_values[1] in [True, False]:
+            return str(condition_values[0]).lower() == str(condition_values[1]).lower()
         return condition_values[0] == condition_values[1]
     elif condition_operator == "Fn::Not":
         return not parse_condition(condition_values[0], resources_map, condition_map)
@@ -507,7 +520,7 @@ class ResourceMap(collections_abc.Mapping):
         self._parsed_resources.update(self._template.get("Mappings", {}))
 
     def transform_mapping(self):
-        for k, v in self._template.get("Mappings", {}).items():
+        for v in self._template.get("Mappings", {}).values():
             if "Fn::Transform" in v:
                 name = v["Fn::Transform"]["Name"]
                 params = v["Fn::Transform"]["Parameters"]
@@ -521,7 +534,7 @@ class ResourceMap(collections_abc.Mapping):
         # The Value in SSM parameters is the SSM parameter path
         # we need to use ssm_backend to retrieve the
         # actual value from parameter store
-        parameter = ssm_backends[self._region_name].get_parameter(value, False)
+        parameter = ssm_backends[self._region_name].get_parameter(value)
         actual_value = parameter.value
         if value_type.find("List") > 0:
             return actual_value.split(",")
@@ -595,7 +608,7 @@ class ResourceMap(collections_abc.Mapping):
 
     def validate_outputs(self):
         outputs = self._template.get("Outputs") or {}
-        for key, value in outputs.items():
+        for value in outputs.values():
             value = value.get("Value", {})
             if "Fn::GetAtt" in value:
                 resource_type = self._resource_json_map.get(value["Fn::GetAtt"][0])[
@@ -763,7 +776,7 @@ class ResourceMap(collections_abc.Mapping):
                             ]
 
                             parse_and_delete_resource(
-                                resource_name, resource_json, self._region_name,
+                                resource_name, resource_json, self._region_name
                             )
 
                         self._parsed_resources.pop(parsed_resource.logical_resource_id)
@@ -823,7 +836,7 @@ class OutputMap(collections_abc.Mapping):
     def exports(self):
         exports = []
         if self.outputs:
-            for key, value in self._output_json_map.items():
+            for value in self._output_json_map.values():
                 if value.get("Export"):
                     cleaned_name = clean_json(
                         value["Export"].get("Name"), self._resource_map

@@ -4,13 +4,14 @@ from jinja2 import Template
 from botocore.exceptions import ParamValidationError
 from collections import OrderedDict
 from moto.core.exceptions import RESTError
-from moto.core import BaseBackend, BaseModel, CloudFormationModel
+from moto.core import ACCOUNT_ID, BaseBackend, BaseModel, CloudFormationModel
 from moto.core.utils import (
     iso_8601_datetime_with_milliseconds,
     get_random_hex,
+    BackendDict,
 )
 from moto.ec2.models import ec2_backends
-from moto.acm.models import acm_backends
+from moto.utilities.tagging_service import TaggingService
 from .utils import make_arn_for_target_group
 from .utils import make_arn_for_load_balancer
 from .exceptions import (
@@ -38,6 +39,14 @@ from .exceptions import (
     InvalidLoadBalancerActionException,
 )
 
+ALLOWED_ACTIONS = [
+    "redirect",
+    "authenticate-cognito",
+    "authenticate-oidc",
+    "fixed-response",
+    "forward",
+]
+
 
 class FakeHealthStatus(BaseModel):
     def __init__(
@@ -61,6 +70,7 @@ class FakeTargetGroup(CloudFormationModel):
         vpc_id,
         protocol,
         port,
+        protocol_version=None,
         healthcheck_protocol=None,
         healthcheck_port=None,
         healthcheck_path=None,
@@ -72,26 +82,32 @@ class FakeTargetGroup(CloudFormationModel):
         matcher=None,
         target_type=None,
     ):
-
         # TODO: default values differs when you add Network Load balancer
         self.name = name
         self.arn = arn
         self.vpc_id = vpc_id
         self.protocol = protocol
+        self.protocol_version = protocol_version or "HTTP1"
         self.port = port
         self.healthcheck_protocol = healthcheck_protocol or self.protocol
         self.healthcheck_port = healthcheck_port
         self.healthcheck_path = healthcheck_path
         self.healthcheck_interval_seconds = healthcheck_interval_seconds or 30
-        self.healthcheck_timeout_seconds = healthcheck_timeout_seconds or 5
+        self.healthcheck_timeout_seconds = healthcheck_timeout_seconds
+        if not healthcheck_timeout_seconds:
+            # Default depends on protocol
+            if protocol in ["TCP", "TLS"]:
+                self.healthcheck_timeout_seconds = 6
+            elif protocol in ["HTTP", "HTTPS", "GENEVE"]:
+                self.healthcheck_timeout_seconds = 5
+            else:
+                self.healthcheck_timeout_seconds = 30
         self.healthcheck_enabled = healthcheck_enabled
         self.healthy_threshold_count = healthy_threshold_count or 5
         self.unhealthy_threshold_count = unhealthy_threshold_count or 2
         self.load_balancer_arns = []
-        self.tags = {}
-        self.matcher = matcher
-        if self.protocol != "TCP":
-            self.matcher = self.matcher or {"HttpCode": "200"}
+        if self.healthcheck_protocol != "TCP":
+            self.matcher = matcher or {"HttpCode": "200"}
             self.healthcheck_path = self.healthcheck_path or "/"
             self.healthcheck_port = self.healthcheck_port or str(self.port)
         self.target_type = target_type
@@ -124,11 +140,6 @@ class FakeTargetGroup(CloudFormationModel):
         for target_id in list(self.targets.keys()):
             if target_id in instance_ids:
                 del self.targets[target_id]
-
-    def add_tag(self, key, value):
-        if len(self.tags) >= 10 and key not in self.tags:
-            raise TooManyTagsError()
-        self.tags[key] = value
 
     def health_for(self, target, ec2_backend):
         t = self.targets.get(target["id"])
@@ -205,6 +216,7 @@ class FakeListener(CloudFormationModel):
         ssl_policy,
         certificate,
         default_actions,
+        alpn_policy,
     ):
         self.load_balancer_arn = load_balancer_arn
         self.arn = arn
@@ -214,6 +226,7 @@ class FakeListener(CloudFormationModel):
         self.certificate = certificate
         self.certificates = [certificate] if certificate is not None else []
         self.default_actions = default_actions
+        self.alpn_policy = alpn_policy or []
         self._non_default_rules = OrderedDict()
         self._default_rule = OrderedDict()
         self._default_rule[0] = FakeRule(
@@ -223,7 +236,6 @@ class FakeListener(CloudFormationModel):
             actions=default_actions,
             is_default=True,
         )
-        self.tags = {}
 
     @property
     def physical_resource_id(self):
@@ -297,9 +309,7 @@ class FakeListener(CloudFormationModel):
 
 
 class FakeListenerRule(CloudFormationModel):
-    def __init__(
-        self, listener_arn, arn, conditions, priority, actions,
-    ):
+    def __init__(self, listener_arn, arn, conditions, priority, actions):
         self.listener_arn = listener_arn
         self.arn = arn
         self.conditions = conditions
@@ -365,9 +375,18 @@ class FakeAction(BaseModel):
         self.data = data
         self.type = data.get("Type")
 
+        if "ForwardConfig" in self.data:
+            if "TargetGroupStickinessConfig" not in self.data["ForwardConfig"]:
+                self.data["ForwardConfig"]["TargetGroupStickinessConfig"] = {
+                    "Enabled": "false"
+                }
+
     def to_xml(self):
         template = Template(
             """<Type>{{ action.type }}</Type>
+            {% if "Order" in action.data %}
+            <Order>{{ action.data["Order"] }}</Order>
+            {% endif %}
             {% if action.type == "forward" and "ForwardConfig" in action.data %}
             <ForwardConfig>
               <TargetGroups>
@@ -378,6 +397,12 @@ class FakeAction(BaseModel):
                 </member>
                 {% endfor %}
               </TargetGroups>
+              <TargetGroupStickinessConfig>
+                  <Enabled>{{ action.data["ForwardConfig"]["TargetGroupStickinessConfig"]["Enabled"] }}</Enabled>
+                  {% if "DurationSeconds" in action.data["ForwardConfig"]["TargetGroupStickinessConfig"] %}
+                  <DurationSeconds>{{ action.data["ForwardConfig"]["TargetGroupStickinessConfig"]["DurationSeconds"] }}</DurationSeconds>
+                  {% endif %}
+              </TargetGroupStickinessConfig>
             </ForwardConfig>
             {% endif %}
             {% if action.type == "forward" and "ForwardConfig" not in action.data %}
@@ -387,13 +412,59 @@ class FakeAction(BaseModel):
                 <Protocol>{{ action.data["RedirectConfig"]["Protocol"] }}</Protocol>
                 <Port>{{ action.data["RedirectConfig"]["Port"] }}</Port>
                 <StatusCode>{{ action.data["RedirectConfig"]["StatusCode"] }}</StatusCode>
+                {% if action.data["RedirectConfig"]["Host"] %}<Host>{{ action.data["RedirectConfig"]["Host"] }}</Host>{% endif %}
+                {% if action.data["RedirectConfig"]["Path"] %}<Path>{{ action.data["RedirectConfig"]["Path"] }}</Path>{% endif %}
+                {% if action.data["RedirectConfig"]["Query"] %}<Query>{{ action.data["RedirectConfig"]["Query"] }}</Query>{% endif %}
             </RedirectConfig>
             {% elif action.type == "authenticate-cognito" %}
             <AuthenticateCognitoConfig>
                 <UserPoolArn>{{ action.data["AuthenticateCognitoConfig"]["UserPoolArn"] }}</UserPoolArn>
                 <UserPoolClientId>{{ action.data["AuthenticateCognitoConfig"]["UserPoolClientId"] }}</UserPoolClientId>
                 <UserPoolDomain>{{ action.data["AuthenticateCognitoConfig"]["UserPoolDomain"] }}</UserPoolDomain>
+                {% if action.data["AuthenticateCognitoConfig"].get("AuthenticationRequestExtraParams") %}
+                <AuthenticationRequestExtraParams>
+                    {% for entry in action.data["AuthenticateCognitoConfig"].get("AuthenticationRequestExtraParams", {}).get("entry", {}).values() %}
+                    <member>
+                        <key>{{ entry["key"] }}</key>
+                        <value>{{ entry["value"] }}</value>
+                    </member>
+                    {% endfor %}
+                </AuthenticationRequestExtraParams>
+                {% endif %}
             </AuthenticateCognitoConfig>
+            {% elif action.type == "authenticate-oidc" %}
+            <AuthenticateOidcConfig>
+              <AuthorizationEndpoint>{{ action.data["AuthenticateOidcConfig"]["AuthorizationEndpoint"] }}</AuthorizationEndpoint>
+              <ClientId>{{ action.data["AuthenticateOidcConfig"]["ClientId"] }}</ClientId>
+              {% if "ClientSecret" in action.data["AuthenticateOidcConfig"] %}
+              <ClientSecret>{{ action.data["AuthenticateOidcConfig"]["ClientSecret"] }}</ClientSecret>
+              {% endif %}
+              <Issuer>{{ action.data["AuthenticateOidcConfig"]["Issuer"] }}</Issuer>
+              <TokenEndpoint>{{ action.data["AuthenticateOidcConfig"]["TokenEndpoint"] }}</TokenEndpoint>
+              <UserInfoEndpoint>{{ action.data["AuthenticateOidcConfig"]["UserInfoEndpoint"] }}</UserInfoEndpoint>
+              {% if "OnUnauthenticatedRequest" in action.data["AuthenticateOidcConfig"] %}
+              <OnUnauthenticatedRequest>{{ action.data["AuthenticateOidcConfig"]["OnUnauthenticatedRequest"] }}</OnUnauthenticatedRequest>
+              {% endif %}
+              {% if "UseExistingClientSecret" in action.data["AuthenticateOidcConfig"] %}
+              <UseExistingClientSecret>{{ action.data["AuthenticateOidcConfig"]["UseExistingClientSecret"] }}</UseExistingClientSecret>
+              {% endif %}
+              {% if "SessionTimeout" in action.data["AuthenticateOidcConfig"] %}
+              <SessionTimeout>{{ action.data["AuthenticateOidcConfig"]["SessionTimeout"] }}</SessionTimeout>
+              {% endif %}
+              {% if "SessionCookieName" in action.data["AuthenticateOidcConfig"] %}
+              <SessionCookieName>{{ action.data["AuthenticateOidcConfig"]["SessionCookieName"] }}</SessionCookieName>
+              {% endif %}
+              {% if "Scope" in action.data["AuthenticateOidcConfig"] %}
+              <Scope>{{ action.data["AuthenticateOidcConfig"]["Scope"] }}</Scope>
+              {% endif %}
+              {% if action.data["AuthenticateOidcConfig"].get("AuthenticationRequestExtraParams") %}
+              <AuthenticationRequestExtraParams>
+                  {% for entry in action.data["AuthenticateOidcConfig"].get("AuthenticationRequestExtraParams", {}).get("entry", {}).values() %}
+                  <member><key>{{ entry["key"] }}</key><value>{{ entry["value"] }}</value></member>
+                  {% endfor %}
+              </AuthenticationRequestExtraParams>
+              {% endif %}
+            </AuthenticateOidcConfig>
             {% elif action.type == "fixed-response" %}
              <FixedResponseConfig>
                 <ContentType>{{ action.data["FixedResponseConfig"]["ContentType"] }}</ContentType>
@@ -425,6 +496,9 @@ class FakeLoadBalancer(CloudFormationModel):
         "access_logs.s3.prefix",
         "deletion_protection.enabled",
         "idle_timeout.timeout_seconds",
+        "load_balancing.cross_zone.enabled",
+        "routing.http2.enabled",
+        "routing.http.drop_invalid_header_fields.enabled",
     }
 
     def __init__(
@@ -465,18 +539,6 @@ class FakeLoadBalancer(CloudFormationModel):
     def physical_resource_id(self):
         return self.arn
 
-    def add_tag(self, key, value):
-        if len(self.tags) >= 10 and key not in self.tags:
-            raise TooManyTagsError()
-        self.tags[key] = value
-
-    def list_tags(self):
-        return self.tags
-
-    def remove_tag(self, key):
-        if key in self.tags:
-            del self.tags[key]
-
     def activate(self):
         if self.state == "provisioning":
             self.state = "active"
@@ -512,8 +574,8 @@ class FakeLoadBalancer(CloudFormationModel):
         return load_balancer
 
     @classmethod
-    def has_cfn_attr(cls, attribute):
-        return attribute in [
+    def has_cfn_attr(cls, attr):
+        return attr in [
             "DNSName",
             "LoadBalancerName",
             "CanonicalHostedZoneID",
@@ -558,6 +620,7 @@ class ELBv2Backend(BaseBackend):
         self.region_name = region_name
         self.target_groups = OrderedDict()
         self.load_balancers = OrderedDict()
+        self.tagging_service = TaggingService()
 
     @staticmethod
     def default_vpc_endpoint_service(service_region, zones):
@@ -576,16 +639,6 @@ class ELBv2Backend(BaseBackend):
         """
         return ec2_backends[self.region_name]
 
-    @property
-    def acm_backend(self):
-        """
-        ACM backend
-
-        :return: ACM Backend
-        :rtype: moto.acm.models.AWSCertificateManagerBackend
-        """
-        return acm_backends[self.region_name]
-
     def reset(self):
         region_name = self.region_name
         self.__dict__ = {}
@@ -596,16 +649,24 @@ class ELBv2Backend(BaseBackend):
         name,
         security_groups,
         subnet_ids,
+        subnet_mappings=None,
         scheme="internet-facing",
         loadbalancer_type=None,
+        tags=None,
     ):
         vpc_id = None
         subnets = []
         state = "provisioning"
 
-        if not subnet_ids:
+        if not subnet_ids and not subnet_mappings:
             raise SubnetNotFoundError()
         for subnet_id in subnet_ids:
+            subnet = self.ec2_backend.get_subnet(subnet_id)
+            if subnet is None:
+                raise SubnetNotFoundError()
+            subnets.append(subnet)
+        for subnet in subnet_mappings or []:
+            subnet_id = subnet["SubnetId"]
             subnet = self.ec2_backend.get_subnet(subnet_id)
             if subnet is None:
                 raise SubnetNotFoundError()
@@ -613,7 +674,7 @@ class ELBv2Backend(BaseBackend):
 
         vpc_id = subnets[0].vpc_id
         arn = make_arn_for_load_balancer(
-            account_id=1, name=name, region_name=self.region_name
+            account_id=ACCOUNT_ID, name=name, region_name=self.region_name
         )
         dns_name = "%s-1.%s.elb.amazonaws.com" % (name, self.region_name)
 
@@ -632,6 +693,7 @@ class ELBv2Backend(BaseBackend):
             loadbalancer_type=loadbalancer_type,
         )
         self.load_balancers[arn] = new_load_balancer
+        self.tagging_service.tag_resource(arn, tags)
         return new_load_balancer
 
     def convert_and_validate_action_properties(self, properties):
@@ -640,18 +702,13 @@ class ELBv2Backend(BaseBackend):
         default_actions = []
         for i, action in enumerate(properties["Actions"]):
             action_type = action["Type"]
-            if action_type in [
-                "redirect",
-                "authenticate-cognito",
-                "fixed-response",
-                "forward",
-            ]:
+            if action_type in ALLOWED_ACTIONS:
                 default_actions.append(action)
             else:
                 raise InvalidActionTypeError(action_type, i + 1)
         return default_actions
 
-    def create_rule(self, listener_arn, conditions, priority, actions):
+    def create_rule(self, listener_arn, conditions, priority, actions, tags=None):
         actions = [FakeAction(action) for action in actions]
         listeners = self.describe_listeners(None, [listener_arn])
         if not listeners:
@@ -681,8 +738,9 @@ class ELBv2Backend(BaseBackend):
         # TODO: check for error 'TooManyRules'
 
         # create rule
-        rule = FakeListenerRule(listener.arn, arn, conditions, priority, actions,)
+        rule = FakeListenerRule(listener.arn, arn, conditions, priority, actions)
         listener.register(arn, rule)
+        self.tagging_service.tag_resource(arn, tags)
         return rule
 
     def _validate_conditions(self, conditions):
@@ -819,6 +877,17 @@ class ELBv2Backend(BaseBackend):
                 "A 'QueryStringConfig' must be specified with 'query-string'"
             )
 
+    def _get_target_group_arns_from(self, action_data):
+        if "TargetGroupArn" in action_data:
+            return [action_data["TargetGroupArn"]]
+        elif "ForwardConfig" in action_data:
+            return [
+                tg["TargetGroupArn"]
+                for tg in action_data["ForwardConfig"].get("TargetGroups", [])
+            ]
+        else:
+            return []
+
     def _validate_actions(self, actions):
         # validate Actions
         target_group_arns = [
@@ -827,13 +896,18 @@ class ELBv2Backend(BaseBackend):
         for i, action in enumerate(actions):
             index = i + 1
             action_type = action.type
-            if action_type == "forward" and "TargetGroupArn" in action.data:
-                action_target_group_arn = action.data["TargetGroupArn"]
-                if action_target_group_arn not in target_group_arns:
-                    raise ActionTargetGroupNotFoundError(action_target_group_arn)
+            if action_type == "forward":
+                found_arns = self._get_target_group_arns_from(action_data=action.data)
+                for target_group_arn in found_arns:
+                    if target_group_arn not in target_group_arns:
+                        raise ActionTargetGroupNotFoundError(target_group_arn)
             elif action_type == "fixed-response":
                 self._validate_fixed_response_action(action, i, index)
-            elif action_type in ["redirect", "authenticate-cognito"]:
+            elif action_type in [
+                "redirect",
+                "authenticate-cognito",
+                "authenticate-oidc",
+            ]:
                 pass
             # pass if listener rule has forward_config as an Action property
             elif action_type == "forward" and "ForwardConfig" in action.data.keys():
@@ -897,7 +971,7 @@ Member must satisfy regular expression pattern: {}".format(
             if target_group.name == name:
                 raise DuplicateTargetGroupName()
 
-        valid_protocols = ["HTTPS", "HTTP", "TCP"]
+        valid_protocols = ["HTTPS", "HTTP", "TCP", "TLS", "UDP", "TCP_UDP", "GENEVE"]
         if (
             kwargs.get("healthcheck_protocol")
             and kwargs["healthcheck_protocol"] not in valid_protocols
@@ -918,6 +992,7 @@ Member must satisfy regular expression pattern: {}".format(
 
         if (
             kwargs.get("matcher")
+            and kwargs["matcher"].get("HttpCode")
             and FakeTargetGroup.HTTP_CODE_REGEX.match(kwargs["matcher"]["HttpCode"])
             is None
         ):
@@ -927,11 +1002,18 @@ Member must satisfy regular expression pattern: {}".format(
             )
 
         arn = make_arn_for_target_group(
-            account_id=1, name=name, region_name=self.region_name
+            account_id=ACCOUNT_ID, name=name, region_name=self.region_name
         )
         target_group = FakeTargetGroup(name, arn, **kwargs)
         self.target_groups[target_group.arn] = target_group
         return target_group
+
+    def modify_target_group_attributes(self, target_group_arn, attributes):
+        target_group = self.target_groups.get(target_group_arn)
+        if not target_group:
+            raise TargetGroupNotFoundError()
+
+        target_group.attributes.update(attributes)
 
     def convert_and_validate_certificates(self, certificates):
 
@@ -952,11 +1034,7 @@ Member must satisfy regular expression pattern: {}".format(
                 default_actions.append(
                     {"Type": action_type, "TargetGroupArn": action["TargetGroupArn"]}
                 )
-            elif action_type in [
-                "redirect",
-                "authenticate-cognito",
-                "fixed-response",
-            ]:
+            elif action_type in ALLOWED_ACTIONS:
                 default_actions.append(action)
             else:
                 raise InvalidActionTypeError(action_type, i + 1)
@@ -970,6 +1048,8 @@ Member must satisfy regular expression pattern: {}".format(
         ssl_policy,
         certificate,
         default_actions,
+        alpn_policy=None,
+        tags=None,
     ):
         default_actions = [FakeAction(action) for action in default_actions]
         balancer = self.load_balancers.get(load_balancer_arn)
@@ -992,12 +1072,17 @@ Member must satisfy regular expression pattern: {}".format(
             ssl_policy,
             certificate,
             default_actions,
+            alpn_policy,
         )
         balancer.listeners[listener.arn] = listener
         for action in default_actions:
             if action.type == "forward":
-                target_group = self.target_groups[action.data["TargetGroupArn"]]
-                target_group.load_balancer_arns.append(load_balancer_arn)
+                found_arns = self._get_target_group_arns_from(action_data=action.data)
+                for arn in found_arns:
+                    target_group = self.target_groups[arn]
+                    target_group.load_balancer_arns.append(load_balancer_arn)
+
+        self.tagging_service.tag_resource(listener.arn, tags)
 
         return listener
 
@@ -1056,6 +1141,8 @@ Member must satisfy regular expression pattern: {}".format(
                 for rule in listener.rules.values():
                     if rule.arn in rule_arns:
                         matched_rules.append(rule)
+        if len(matched_rules) != len(rule_arns):
+            raise RuleNotFoundError("One or more rules not found")
         return matched_rules
 
     def describe_target_groups(self, load_balancer_arn, target_group_arns, names):
@@ -1259,7 +1346,7 @@ Member must satisfy regular expression pattern: {}".format(
 
         balancer.security_groups = sec_groups
 
-    def set_subnets(self, arn, subnets):
+    def set_subnets(self, arn, subnets, subnet_mappings):
         balancer = self.load_balancers.get(arn)
         if balancer is None:
             raise LoadBalancerNotFoundError()
@@ -1268,18 +1355,19 @@ Member must satisfy regular expression pattern: {}".format(
         sub_zone_list = {}
         for subnet in subnets:
             try:
-                subnet = self.ec2_backend.get_subnet(subnet)
-
-                if subnet.availability_zone in sub_zone_list:
-                    raise RESTError(
-                        "InvalidConfigurationRequest",
-                        "More than 1 subnet cannot be specified for 1 availability zone",
-                    )
+                subnet = self._get_subnet(sub_zone_list, subnet)
 
                 sub_zone_list[subnet.availability_zone] = subnet.id
                 subnet_objects.append(subnet)
             except Exception:
                 raise SubnetNotFoundError()
+
+        for subnet_mapping in subnet_mappings:
+            subnet_id = subnet_mapping["SubnetId"]
+            subnet = self._get_subnet(sub_zone_list, subnet_id)
+
+            sub_zone_list[subnet.availability_zone] = subnet.id
+            subnet_objects.append(subnet)
 
         if len(sub_zone_list) < 2:
             raise RESTError(
@@ -1290,6 +1378,15 @@ Member must satisfy regular expression pattern: {}".format(
         balancer.subnets = subnet_objects
 
         return sub_zone_list.items()
+
+    def _get_subnet(self, sub_zone_list, subnet):
+        subnet = self.ec2_backend.get_subnet(subnet)
+        if subnet.availability_zone in sub_zone_list:
+            raise RESTError(
+                "InvalidConfigurationRequest",
+                "More than 1 subnet cannot be specified for 1 availability zone",
+            )
+        return subnet
 
     def modify_load_balancer_attributes(self, arn, attrs):
         balancer = self.load_balancers.get(arn)
@@ -1338,7 +1435,7 @@ Member must satisfy regular expression pattern: {}".format(
                 "HttpCode must be like 200 | 200-399 | 200,201 ...",
             )
 
-        if http_codes is not None:
+        if http_codes is not None and target_group.protocol in ["HTTP", "HTTPS"]:
             target_group.matcher["HttpCode"] = http_codes
         if health_check_interval is not None:
             target_group.healthcheck_interval_seconds = health_check_interval
@@ -1369,49 +1466,42 @@ Member must satisfy regular expression pattern: {}".format(
         default_actions=None,
     ):
         default_actions = [FakeAction(action) for action in default_actions]
-        for load_balancer in self.load_balancers.values():
-            if arn in load_balancer.listeners:
-                break
-        else:
-            raise ListenerNotFoundError()
-
-        listener = load_balancer.listeners[arn]
+        listener = self.describe_listeners(load_balancer_arn=None, listener_arns=[arn])[
+            0
+        ]
 
         if port is not None:
-            for listener_arn, current_listener in load_balancer.listeners.items():
-                if listener_arn == arn:
-                    continue
-
             listener.port = port
 
-        if protocol is not None:
-            if protocol not in ("HTTP", "HTTPS", "TCP"):
-                raise RESTError(
-                    "UnsupportedProtocol",
-                    "Protocol {0} is not supported".format(protocol),
-                )
+        if protocol not in (None, "HTTP", "HTTPS", "TCP"):
+            raise RESTError(
+                "UnsupportedProtocol", "Protocol {0} is not supported".format(protocol)
+            )
 
-            # HTTPS checks
-            if protocol == "HTTPS":
-                # Check certificates exist
-                if certificates:
-                    default_cert = certificates[0]
-                    default_cert_arn = default_cert["certificate_arn"]
-                    try:
-                        self.acm_backend.get_certificate(default_cert_arn)
-                    except Exception:
-                        raise RESTError(
-                            "CertificateNotFound",
-                            "Certificate {0} not found".format(default_cert_arn),
-                        )
-                    listener.certificate = default_cert_arn
-                    listener.certificates = certificates
-                else:
+        # HTTPS checks
+        protocol_becomes_https = protocol == "HTTPS"
+        protocol_stays_https = protocol is None and listener.protocol == "HTTPS"
+        if protocol_becomes_https or protocol_stays_https:
+            # Check certificates exist
+            if certificates:
+                default_cert = certificates[0]
+                default_cert_arn = default_cert["certificate_arn"]
+                if not self._certificate_exists(certificate_arn=default_cert_arn):
                     raise RESTError(
-                        "CertificateWereNotPassed",
-                        "You must provide a list containing exactly one certificate if the listener protocol is HTTPS.",
+                        "CertificateNotFound",
+                        "Certificate {0} not found".format(default_cert_arn),
                     )
+                listener.certificate = default_cert_arn
+                listener.certificates = certificates
+            elif len(certificates) == 0 and len(listener.certificates) == 0:
+                raise RESTError(
+                    "CertificateWereNotPassed",
+                    "You must provide a list containing exactly one certificate if the listener protocol is HTTPS.",
+                )
+            # else:
+            # The list was not provided, meaning we just keep the existing certificates (if any)
 
+        if protocol is not None:
             listener.protocol = protocol
 
         if ssl_policy is not None:
@@ -1421,15 +1511,43 @@ Member must satisfy regular expression pattern: {}".format(
         if default_actions is not None and default_actions != []:
             # Is currently not validated
             listener.default_actions = default_actions
+            listener._default_rule[0].actions = default_actions
 
         return listener
+
+    def _certificate_exists(self, certificate_arn):
+        """
+        Verify the provided certificate exists in either ACM or IAM
+        """
+        from moto.acm import acm_backends
+        from moto.acm.models import AWSResourceNotFoundException
+
+        try:
+            acm_backend = acm_backends[self.region_name]
+            acm_backend.get_certificate(certificate_arn)
+            return True
+        except AWSResourceNotFoundException:
+            pass
+
+        from moto.iam import iam_backend
+
+        cert = iam_backend.get_certificate_by_arn(certificate_arn)
+        if cert is not None:
+            return True
+
+        # ACM threw an error, and IAM did not return a certificate
+        # Safe to assume it doesn't exist when we get here
+        return False
 
     def _any_listener_using(self, target_group_arn):
         for load_balancer in self.load_balancers.values():
             for listener in load_balancer.listeners.values():
                 for rule in listener.rules.values():
                     for action in rule.actions:
-                        if action.data.get("TargetGroupArn") == target_group_arn:
+                        found_arns = self._get_target_group_arns_from(
+                            action_data=action.data
+                        )
+                        if target_group_arn in found_arns:
                             return True
         return False
 
@@ -1437,7 +1555,78 @@ Member must satisfy regular expression pattern: {}".format(
         for target_group in self.target_groups.values():
             target_group.deregister_terminated_instances(instance_ids)
 
+    def add_listener_certificates(self, arn, certificates):
+        listener = self.describe_listeners(load_balancer_arn=None, listener_arns=[arn])[
+            0
+        ]
+        listener.certificates.extend([c["certificate_arn"] for c in certificates])
+        return listener.certificates
 
-elbv2_backends = {}
-for region in ec2_backends.keys():
-    elbv2_backends[region] = ELBv2Backend(region)
+    def describe_listener_certificates(self, arn):
+        listener = self.describe_listeners(load_balancer_arn=None, listener_arns=[arn])[
+            0
+        ]
+        return listener.certificates
+
+    def remove_listener_certificates(self, arn, certificates):
+        listener = self.describe_listeners(load_balancer_arn=None, listener_arns=[arn])[
+            0
+        ]
+        cert_arns = [c["certificate_arn"] for c in certificates]
+        listener.certificates = [c for c in listener.certificates if c not in cert_arns]
+
+    def add_tags(self, resource_arns, tags):
+        tag_dict = self.tagging_service.flatten_tag_list(tags)
+        for arn in resource_arns:
+            existing = self.tagging_service.get_tag_dict_for_resource(arn)
+            for key in tag_dict:
+                if len(existing) >= 10 and key not in existing:
+                    raise TooManyTagsError()
+            self._get_resource_by_arn(arn)
+            self.tagging_service.tag_resource(arn, tags)
+
+    def remove_tags(self, resource_arns, tag_keys):
+        for arn in resource_arns:
+            self.tagging_service.untag_resource_using_names(arn, tag_keys)
+
+    def describe_tags(self, resource_arns):
+        return {
+            arn: self.tagging_service.get_tag_dict_for_resource(arn)
+            for arn in resource_arns
+        }
+
+    def _get_resource_by_arn(self, arn):
+        if ":targetgroup" in arn:
+            resource = self.target_groups.get(arn)
+            if not resource:
+                raise TargetGroupNotFoundError()
+        elif ":loadbalancer" in arn:
+            resource = self.load_balancers.get(arn)
+            if not resource:
+                raise LoadBalancerNotFoundError()
+        elif ":listener-rule" in arn:
+            lb_arn = arn.replace(":listener-rule", ":loadbalancer").rsplit("/", 2)[0]
+            balancer = self.load_balancers.get(lb_arn)
+            if not balancer:
+                raise LoadBalancerNotFoundError()
+            listener_arn = arn.replace(":listener-rule", ":listener").rsplit("/", 1)[0]
+            listener = balancer.listeners.get(listener_arn)
+            if not listener:
+                raise ListenerNotFoundError()
+            resource = listener.rules.get(arn)
+            if not resource:
+                raise RuleNotFoundError()
+        elif ":listener" in arn:
+            lb_arn, _, _ = arn.replace(":listener", ":loadbalancer").rpartition("/")
+            balancer = self.load_balancers.get(lb_arn)
+            if not balancer:
+                raise LoadBalancerNotFoundError()
+            resource = balancer.listeners.get(arn)
+            if not resource:
+                raise ListenerNotFoundError()
+        else:
+            raise LoadBalancerNotFoundError()
+        return resource
+
+
+elbv2_backends = BackendDict(ELBv2Backend, "ec2")

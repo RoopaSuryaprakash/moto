@@ -128,16 +128,8 @@ class SimpleSystemManagerResponse(BaseResponse):
 
     def describe_document_permission(self):
         name = self._get_param("Name")
-        max_results = self._get_param("MaxResults")
-        next_token = self._get_param("NextToken")
-        permission_type = self._get_param("PermissionType")
 
-        result = self.ssm_backend.describe_document_permission(
-            name=name,
-            max_results=max_results,
-            next_token=next_token,
-            permission_type=permission_type,
-        )
+        result = self.ssm_backend.describe_document_permission(name=name)
         return json.dumps(result)
 
     def modify_document_permission(self):
@@ -155,8 +147,8 @@ class SimpleSystemManagerResponse(BaseResponse):
             permission_type=permission_type,
         )
 
-    def _get_param(self, param, default=None):
-        return self.request_params.get(param, default)
+    def _get_param(self, param_name, if_none=None):
+        return self.request_params.get(param_name, if_none)
 
     def delete_parameter(self):
         name = self._get_param("Name")
@@ -186,7 +178,7 @@ class SimpleSystemManagerResponse(BaseResponse):
         name = self._get_param("Name")
         with_decryption = self._get_param("WithDecryption")
 
-        result = self.ssm_backend.get_parameter(name, with_decryption)
+        result = self.ssm_backend.get_parameter(name)
 
         if result is None:
             error = {
@@ -202,7 +194,7 @@ class SimpleSystemManagerResponse(BaseResponse):
         names = self._get_param("Names")
         with_decryption = self._get_param("WithDecryption")
 
-        result = self.ssm_backend.get_parameters(names, with_decryption)
+        result = self.ssm_backend.get_parameters(names)
 
         response = {"Parameters": [], "InvalidParameters": []}
 
@@ -226,7 +218,6 @@ class SimpleSystemManagerResponse(BaseResponse):
 
         result, next_token = self.ssm_backend.get_parameters_by_path(
             path,
-            with_decryption,
             recursive,
             filters,
             next_token=token,
@@ -307,7 +298,7 @@ class SimpleSystemManagerResponse(BaseResponse):
         max_results = self._get_param("MaxResults", 50)
 
         result, new_next_token = self.ssm_backend.get_parameter_history(
-            name, with_decryption, next_token, max_results
+            name, next_token, max_results
         )
 
         if result is None:
@@ -379,3 +370,46 @@ class SimpleSystemManagerResponse(BaseResponse):
         return json.dumps(
             self.ssm_backend.get_command_invocation(**self.request_params)
         )
+
+    def create_maintenance_window(self):
+        name = self._get_param("Name")
+        desc = self._get_param("Description", None)
+        enabled = self._get_bool_param("Enabled", True)
+        duration = self._get_int_param("Duration")
+        cutoff = self._get_int_param("Cutoff")
+        schedule = self._get_param("Schedule")
+        schedule_timezone = self._get_param("ScheduleTimezone")
+        schedule_offset = self._get_int_param("ScheduleOffset")
+        start_date = self._get_param("StartDate")
+        end_date = self._get_param("EndDate")
+        window_id = self.ssm_backend.create_maintenance_window(
+            name=name,
+            description=desc,
+            enabled=enabled,
+            duration=duration,
+            cutoff=cutoff,
+            schedule=schedule,
+            schedule_timezone=schedule_timezone,
+            schedule_offset=schedule_offset,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return json.dumps({"WindowId": window_id})
+
+    def get_maintenance_window(self):
+        window_id = self._get_param("WindowId")
+        window = self.ssm_backend.get_maintenance_window(window_id)
+        return json.dumps(window.to_json())
+
+    def describe_maintenance_windows(self):
+        filters = self._get_param("Filters", None)
+        windows = [
+            window.to_json()
+            for window in self.ssm_backend.describe_maintenance_windows(filters)
+        ]
+        return json.dumps({"WindowIdentities": windows})
+
+    def delete_maintenance_window(self):
+        window_id = self._get_param("WindowId")
+        self.ssm_backend.delete_maintenance_window(window_id)
+        return "{}"
