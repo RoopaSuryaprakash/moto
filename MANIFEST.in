@@ -10,5 +10,4 @@ include moto/dynamodb/parsing/reserved_keywords.txt
 include moto/ssm/resources/*.json
 include moto/support/resources/*.json
 recursive-include moto/moto_server *
-recursive-include moto/templates *
 recursive-include tests *
