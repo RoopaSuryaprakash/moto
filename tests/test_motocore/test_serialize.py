@@ -1,6 +1,6 @@
 from moto.motocore.loaders import _load_service_model
 from moto.ec2 import ec2_backends
-from moto.ec2.models import Ami
+from moto.ec2._models.amis import Ami
 from moto.motocore.serialize import create_serializer
 
 
