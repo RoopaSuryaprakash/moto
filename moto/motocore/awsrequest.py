@@ -116,7 +116,9 @@ def request_dict_to_parsed(request_dict):
     # TODO: Not sure when/where to generate this
     ctx["request_id"] = get_random_message_id()
     client = get_custom_client(
-        ctx["service"], region_name=ctx["region"], api_version=ctx["api_version"],
+        ctx["service"],
+        region_name=ctx["region"],
+        api_version=ctx["api_version"],
     )
 
     # The former is for boto because they use Query in places where Boto3 uses json or rest-json, etc.
@@ -156,7 +158,7 @@ def request_dict_to_parsed(request_dict):
         )
 
     try:
-        from moto.motocore.compat import inspect_getargspec
+        # from moto.motocore.compat import inspect_getargspec
 
         # TODO: I feel like we should check the response object first and call that
         # method if it exists, otherwise call the backend method.
@@ -165,7 +167,7 @@ def request_dict_to_parsed(request_dict):
         method = getattr(backend, backend_action)
         # TODO: Only pass parameters that match the call signature; pass all if kwargs is present.
         # param_spec = inspect.signature(method)
-        arg_spec = inspect_getargspec(method)
+        # arg_spec = inspect_getargspec(method)
         # This is super cool because we can use it to only send params
         # that the method accepts and we can also detect VAR_KEYWORD to
         # if we can just pass everything.

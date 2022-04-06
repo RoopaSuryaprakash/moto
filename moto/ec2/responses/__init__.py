@@ -115,7 +115,7 @@ class EC2Response(
             "RegisterImage",
             "DeregisterImage",
             "RunInstances",
-            #"DescribeInstances",
+            # "DescribeInstances",
             "DescribeVolumes",
             "DescribeSnapshots",
             "TerminateInstances",
@@ -136,26 +136,28 @@ class EC2Response(
         elif self.operation_model.name in ["RunInstances"]:
             kwargs = kwargs.get("reservation", object)
         elif self.operation_model.name in ["ModifyImageAttribute"]:
-            kwargs['return'] = True
+            kwargs["return"] = True
         elif self.operation_model.name in ["DeregisterImage"]:
-            kwargs['return'] = True if kwargs.get('success', 'true') == 'true' else False
+            kwargs["return"] = (
+                True if kwargs.get("success", "true") == "true" else False
+            )
         elif self.operation_model.name in ["DescribeImageAttribute"]:
             kwargs["image_id"] = kwargs["ami_id"]
             lps = []
-            for index, item in enumerate(list(kwargs.get('groups', []))):
+            for index, item in enumerate(list(kwargs.get("groups", []))):
                 try:
-                    lps[index]['group'] = item
+                    lps[index]["group"] = item
                 except IndexError:
                     lps.append({})
-                    lps[index]['group'] = item
-            for index, item in enumerate(list(kwargs.get('users', []))):
+                    lps[index]["group"] = item
+            for index, item in enumerate(list(kwargs.get("users", []))):
                 try:
-                    lps[index]['user_id'] = item
+                    lps[index]["user_id"] = item
                 except IndexError:
                     lps.append({})
-                    lps[index]['user_id'] = item
-            kwargs['launch_permissions'] = lps
+                    lps[index]["user_id"] = item
+            kwargs["launch_permissions"] = lps
 
         # serialized = self.serializer.serialize_object(kwargs, self.operation_model)
         serialized = self.serializer.serialize_to_response(kwargs, self.operation_model)
-        return serialized['status_code'], serialized['headers'], serialized['body']
+        return serialized["status_code"], serialized["headers"], serialized["body"]

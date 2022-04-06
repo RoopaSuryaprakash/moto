@@ -88,38 +88,114 @@ class AmisResponse(EC2BaseResponse):
 
 
 CREATE_IMAGE_RESPONSE = """<CreateImageResponse xmlns="http://ec2.amazonaws.com/doc/2013-10-15/">
-  
+   <requestId>59dbff89-35bd-4eac-99ed-be587EXAMPLE</requestId>
+   <imageId>{{ image.id }}</imageId>
 </CreateImageResponse>"""
 
 COPY_IMAGE_RESPONSE = """<CopyImageResponse xmlns="http://ec2.amazonaws.com/doc/2013-10-15/">
-   
+   <requestId>60bc441d-fa2c-494d-b155-5d6a3EXAMPLE</requestId>
+   <imageId>{{ image.id }}</imageId>
 </CopyImageResponse>"""
 
 # TODO almost all of these params should actually be templated based on
 # the ec2 image
 DESCRIBE_IMAGES_RESPONSE = """<DescribeImagesResponse xmlns="http://ec2.amazonaws.com/doc/2013-10-15/">
-  
+  <requestId>59dbff89-35bd-4eac-99ed-be587EXAMPLE</requestId>
+  <imagesSet>
+    {% for image in images %}
+        <item>
+          <imageId>{{ image.id }}</imageId>
+          <imageLocation>{{ image.image_location }}</imageLocation>
+          <imageState>{{ image.state }}</imageState>
+          <imageOwnerId>{{ image.owner_id }}</imageOwnerId>
+          <isPublic>{{ image.is_public_string }}</isPublic>
+          <architecture>{{ image.architecture }}</architecture>
+          <imageType>{{ image.image_type }}</imageType>
+          <kernelId>{{ image.kernel_id }}</kernelId>
+          <ramdiskId>ari-1a2b3c4d</ramdiskId>
+          <imageOwnerAlias>amazon</imageOwnerAlias>
+          <creationDate>{{ image.creation_date }}</creationDate>
+          <name>{{ image.name }}</name>
+          {% if image.platform %}
+             <platform>{{ image.platform }}</platform>
+          {% endif %}
+          <description>{{ image.description }}</description>
+          <rootDeviceType>{{ image.root_device_type }}</rootDeviceType>
+          <rootDeviceName>{{ image.root_device_name }}</rootDeviceName>
+          <blockDeviceMapping>
+            <item>
+              <deviceName>{{ image.root_device_name }}</deviceName>
+              <ebs>
+                <snapshotId>{{ image.ebs_snapshot.id }}</snapshotId>
+                <volumeSize>15</volumeSize>
+                <deleteOnTermination>false</deleteOnTermination>
+                <volumeType>standard</volumeType>
+              </ebs>
+            </item>
+          </blockDeviceMapping>
+          <virtualizationType>{{ image.virtualization_type }}</virtualizationType>
+          <tagSet>
+            {% for tag in image.get_tags() %}
+              <item>
+                <resourceId>{{ tag.resource_id }}</resourceId>
+                <resourceType>{{ tag.resource_type }}</resourceType>
+                <key>{{ tag.key }}</key>
+                <value>{{ tag.value }}</value>
+              </item>
+            {% endfor %}
+          </tagSet>
+          <hypervisor>xen</hypervisor>
+        </item>
+    {% endfor %}
+  </imagesSet>
 </DescribeImagesResponse>"""
 
 DESCRIBE_IMAGE_RESPONSE = """<DescribeImageAttributeResponse xmlns="http://ec2.amazonaws.com/doc/2013-10-15/">
-  
+   <requestId>59dbff89-35bd-4eac-99ed-be587EXAMPLE</requestId>
+   <imageId>{{ image.id }}</imageId>
+   <{{ key }}>
+     <value>{{ value }}</value>
+   </{{key }}>
 </DescribeImageAttributeResponse>"""
 
 DEREGISTER_IMAGE_RESPONSE = """<DeregisterImageResponse xmlns="http://ec2.amazonaws.com/doc/2013-10-15/">
-  
+  <requestId>59dbff89-35bd-4eac-99ed-be587EXAMPLE</requestId>
+  <return>{{ success }}</return>
 </DeregisterImageResponse>"""
 
 DESCRIBE_IMAGE_ATTRIBUTES_RESPONSE = """
 <DescribeImageAttributeResponse xmlns="http://ec2.amazonaws.com/doc/2013-10-15/">
-  
+   <requestId>59dbff89-35bd-4eac-99ed-be587EXAMPLE</requestId>
+   <imageId>{{ ami_id }}</imageId>
+   {% if not groups and not users %}
+      <launchPermission/>
+   {% else %}
+      <launchPermission>
+         {% if groups %}
+            {% for group in groups %}
+               <item>
+                  <group>{{ group }}</group>
+               </item>
+            {% endfor %}
+         {% endif %}
+         {% if users %}
+            {% for user in users %}
+               <item>
+                  <userId>{{ user }}</userId>
+               </item>
+            {% endfor %}
+         {% endif %}
+      </launchPermission>
+   {% endif %}
 </DescribeImageAttributeResponse>"""
 
 MODIFY_IMAGE_ATTRIBUTE_RESPONSE = """
 <ModifyImageAttributeResponse xmlns="http://ec2.amazonaws.com/doc/2013-10-15/">
- 
+   <return>true</return>
 </ModifyImageAttributeResponse>
 """
 
 REGISTER_IMAGE_RESPONSE = """<RegisterImageResponse xmlns="http://ec2.amazonaws.com/doc/2013-10-15/">
- 
+   <requestId>59dbff89-35bd-4eac-99ed-be587EXAMPLE</requestId>
+   <imageId>{{ image.id }}</imageId>
 </RegisterImageResponse>"""

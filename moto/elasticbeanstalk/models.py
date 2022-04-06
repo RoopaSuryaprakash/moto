@@ -8,7 +8,11 @@ from .utils import make_arn
 
 class Environment(BaseModel):
     def __init__(
-        self, application, environment_name, solution_stack_name, tags,
+        self,
+        application,
+        environment_name,
+        solution_stack_name,
+        tags,
     ):
         self.application = weakref.proxy(
             application
@@ -42,7 +46,10 @@ class Application(BaseModel):
         self.environments = dict()
 
     def create_environment(
-        self, environment_name, solution_stack_name, tags,
+        self,
+        environment_name,
+        solution_stack_name,
+        tags,
     ):
         if environment_name in self.environments:
             raise InvalidParameterValueError
@@ -92,7 +99,10 @@ class EBBackend(BaseBackend):
             raise InvalidParameterValueError(
                 "Application {} already exists.".format(application_name)
             )
-        new_app = Application(backend=self, application_name=application_name,)
+        new_app = Application(
+            backend=self,
+            application_name=application_name,
+        )
         self.applications[application_name] = new_app
         return new_app
 

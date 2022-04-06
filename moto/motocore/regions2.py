@@ -4,7 +4,6 @@ This module implements endpoint resolution, including resolving endpoints for a
 given service and region and resolving the available endpoints for a service
 in a specific AWS partition.
 """
-from collections import namedtuple
 import logging
 import re
 
@@ -178,7 +177,7 @@ class EndpointDeconstructor(BaseEndpointDeconstructor):
         # Merge in the service defaults then the partition defaults.
         self._merge_keys(service_data.get("defaults", {}), result)
         self._merge_keys(partition.get("defaults", {}), result)
-        hostname = result.get("hostname", DEFAULT_URI_TEMPLATE)
+        # hostname = result.get("hostname", DEFAULT_URI_TEMPLATE)
         result["hostname"] = self._expand_template(
             partition, result["hostname"], service_name, endpoint_name
         )

@@ -674,7 +674,10 @@ class DictSerializer(Serializer):
             sender_fault = True
         serialized["status_code"] = status_code
         error_body = {
-            "Error": {"Code": error_code, "Message": str(error),},
+            "Error": {
+                "Code": error_code,
+                "Message": str(error),
+            },
             "RequestId": serialized["headers"]["x-amzn-RequestId"],
         }
         if sender_fault:

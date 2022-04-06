@@ -38,7 +38,15 @@ class EndpointResolver(BotocoreEndpointResolver):
                 if service in EndpointResolver.SERVICES_BLACKLIST:
                     continue
                 for region in partition["services"][service]["endpoints"]:
-                    ep = self._endpoint_for_partition(partition, service, region)
+                    # This is a private botocore method and has already broken...
+                    # Maybe fine a different way...
+                    ep = self._endpoint_for_partition(
+                        partition,
+                        service,
+                        region,
+                        use_dualstack_endpoint=False,
+                        use_fips_endpoint=False,
+                    )
                     if hostname in [
                         ep.get("sslCommonName"),
                         ep.get("hostname"),

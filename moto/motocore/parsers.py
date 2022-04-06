@@ -1,9 +1,11 @@
+import base64
+import json
+
 import six
 from botocore import xform_name
 from botocore.utils import parse_timestamp
 
 DEFAULT_TIMESTAMP_PARSER = parse_timestamp
-import json
 
 
 class RequestParserFactory(object):
@@ -592,7 +594,7 @@ class RestJSONParser(JSONParser):
 
 
 PROTOCOL_PARSERS = {
-    #'ec2': EC2QueryParser,
+    # 'ec2': EC2QueryParser,
     "query": QueryParser,
     "json": JSONParser,
     "rest-json": RestJSONParser,
