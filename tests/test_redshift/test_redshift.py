@@ -46,14 +46,15 @@ def test_create_cluster_boto3():
             }
         ]
     )
-    cluster["ClusterSubnetGroupName"].should.equal("")
+    # AWS does not serialize None values
+    # cluster["ClusterSubnetGroupName"].should.equal("")
     cluster["AvailabilityZone"].should.equal("us-east-1a")
     cluster["PreferredMaintenanceWindow"].should.equal("Mon:03:00-Mon:03:30")
     cluster["ClusterVersion"].should.equal("1.0")
     cluster["AllowVersionUpgrade"].should.equal(True)
     cluster["NumberOfNodes"].should.equal(1)
     cluster["EnhancedVpcRouting"].should.equal(False)
-    cluster["KmsKeyId"].should.equal("")
+    # cluster["KmsKeyId"].should.equal("")
     cluster["Endpoint"]["Port"].should.equal(5439)
 
 

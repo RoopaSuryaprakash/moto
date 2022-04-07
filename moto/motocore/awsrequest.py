@@ -216,7 +216,7 @@ MAX_RECORDS = 100
 
 
 def _paginate_response(resources, parameters):
-    from moto.rds3.exceptions import InvalidParameterValue
+    from moto.rds.exceptions import InvalidParameterValue
 
     marker = parameters.get("marker")
     page_size = parameters.get("max_records", MAX_RECORDS)
