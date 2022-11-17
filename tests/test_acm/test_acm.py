@@ -1,34 +1,34 @@
-from __future__ import unicode_literals
+from moto.acm.models import AWS_ROOT_CA
 
 import os
 import uuid
 
 import boto3
 import pytest
-import sure  # noqa
-import sys
+import sure  # noqa # pylint: disable=unused-import
 from botocore.exceptions import ClientError
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
 from freezegun import freeze_time
-from moto import mock_acm, settings
-from moto.core import ACCOUNT_ID
+from moto import mock_acm, mock_elb, settings
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
+from unittest import SkipTest, mock
 
-if sys.version_info[0] < 3:
-    import mock
-    from unittest import SkipTest
-else:
-    from unittest import SkipTest, mock
 
 RESOURCE_FOLDER = os.path.join(os.path.dirname(__file__), "resources")
-_GET_RESOURCE = lambda x: open(os.path.join(RESOURCE_FOLDER, x), "rb").read()
-CA_CRT = _GET_RESOURCE("ca.pem")
-CA_KEY = _GET_RESOURCE("ca.key")
-SERVER_CRT = _GET_RESOURCE("star_moto_com.pem")
+
+
+def get_resource(filename):
+    return open(os.path.join(RESOURCE_FOLDER, filename), "rb").read()
+
+
+CA_CRT = get_resource("ca.pem")
+CA_KEY = get_resource("ca.key")
+SERVER_CRT = get_resource("star_moto_com.pem")
 SERVER_COMMON_NAME = "*.moto.com"
-SERVER_CRT_BAD = _GET_RESOURCE("star_moto_com-bad.pem")
-SERVER_KEY = _GET_RESOURCE("star_moto_com.key")
-BAD_ARN = "arn:aws:acm:us-east-2:{}:certificate/_0000000-0000-0000-0000-000000000000".format(
-    ACCOUNT_ID
-)
+SERVER_CRT_BAD = get_resource("star_moto_com-bad.pem")
+SERVER_KEY = get_resource("star_moto_com.key")
+BAD_ARN = f"arn:aws:acm:us-east-2:{ACCOUNT_ID}:certificate/_0000000-0000-0000-0000-000000000000"
 
 
 def _import_cert(client):
@@ -60,7 +60,7 @@ def test_import_certificate_with_tags():
         Certificate=SERVER_CRT,
         PrivateKey=SERVER_KEY,
         CertificateChain=CA_CRT,
-        Tags=[{"Key": "Environment", "Value": "QA"}, {"Key": "KeyOnly"},],
+        Tags=[{"Key": "Environment", "Value": "QA"}, {"Key": "KeyOnly"}],
     )
     arn = resp["CertificateArn"]
 
@@ -160,25 +160,65 @@ def test_describe_certificate():
     client = boto3.client("acm", region_name="eu-central-1")
     arn = _import_cert(client)
 
-    resp = client.describe_certificate(CertificateArn=arn)
+    try:
+        resp = client.describe_certificate(CertificateArn=arn)
+    except OverflowError:
+        pytest.skip("This test requires 64-bit time_t")
     resp["Certificate"]["CertificateArn"].should.equal(arn)
     resp["Certificate"]["DomainName"].should.equal(SERVER_COMMON_NAME)
     resp["Certificate"]["Issuer"].should.equal("Moto")
     resp["Certificate"]["KeyAlgorithm"].should.equal("RSA_2048")
     resp["Certificate"]["Status"].should.equal("ISSUED")
     resp["Certificate"]["Type"].should.equal("IMPORTED")
+    resp["Certificate"].should.have.key("RenewalEligibility").equals("INELIGIBLE")
+    resp["Certificate"].should.have.key("Options")
+    resp["Certificate"].should.have.key("DomainValidationOptions").length_of(1)
+
+    validation_option = resp["Certificate"]["DomainValidationOptions"][0]
+    validation_option.should.have.key("DomainName").equals(SERVER_COMMON_NAME)
+    validation_option.shouldnt.have.key("ValidationDomain")
 
 
 @mock_acm
 def test_describe_certificate_with_bad_arn():
     client = boto3.client("acm", region_name="eu-central-1")
 
-    try:
+    with pytest.raises(ClientError) as err:
         client.describe_certificate(CertificateArn=BAD_ARN)
-    except ClientError as err:
-        err.response["Error"]["Code"].should.equal("ResourceNotFoundException")
-    else:
-        raise RuntimeError("Should of raised ResourceNotFoundException")
+
+    err.value.response["Error"]["Code"].should.equal("ResourceNotFoundException")
+
+
+@mock_acm
+def test_export_certificate():
+    client = boto3.client("acm", region_name="eu-central-1")
+    arn = _import_cert(client)
+
+    resp = client.export_certificate(CertificateArn=arn, Passphrase="pass")
+    resp["Certificate"].should.equal(SERVER_CRT.decode())
+    resp["CertificateChain"].should.equal(CA_CRT.decode() + "\n" + AWS_ROOT_CA.decode())
+    resp.should.have.key("PrivateKey")
+
+    key = serialization.load_pem_private_key(
+        bytes(resp["PrivateKey"], "utf-8"), password=b"pass", backend=default_backend()
+    )
+
+    private_key = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    private_key.should.equal(SERVER_KEY)
+
+
+@mock_acm
+def test_export_certificate_with_bad_arn():
+    client = boto3.client("acm", region_name="eu-central-1")
+
+    with pytest.raises(ClientError) as err:
+        client.export_certificate(CertificateArn=BAD_ARN, Passphrase="pass")
+
+    err.value.response["Error"]["Code"].should.equal("ResourceNotFoundException")
 
 
 # Also tests ListTagsForCertificate
@@ -372,7 +412,7 @@ def test_request_certificate_with_tags():
         DomainName="google.com",
         IdempotencyToken=token,
         SubjectAlternativeNames=["google.com", "www.google.com", "mail.google.com"],
-        Tags=[{"Key": "Environment", "Value": "Prod"}, {"Key": "KeyOnly"},],
+        Tags=[{"Key": "Environment", "Value": "Prod"}, {"Key": "KeyOnly"}],
     )
     arn_2 = resp["CertificateArn"]
 
@@ -393,6 +433,18 @@ def test_request_certificate_with_tags():
             {"Key": "WithEmptyStr", "Value": ""},
         ],
     )
+    arn_3 = resp["CertificateArn"]
+
+    assert arn_1 != arn_3  # if tags are matched, ACM would have returned same arn
+
+    resp = client.request_certificate(
+        DomainName="google.com",
+        IdempotencyToken=token,
+        SubjectAlternativeNames=["google.com", "www.google.com", "mail.google.com"],
+    )
+    arn_4 = resp["CertificateArn"]
+
+    assert arn_1 != arn_4  # if tags are matched, ACM would have returned same arn
 
 
 @mock_acm
@@ -402,7 +454,7 @@ def test_operations_with_invalid_tags():
     # request certificate with invalid tags
     with pytest.raises(ClientError) as ex:
         client.request_certificate(
-            DomainName="example.com", Tags=[{"Key": "X" * 200, "Value": "Valid"}],
+            DomainName="example.com", Tags=[{"Key": "X" * 200, "Value": "Valid"}]
         )
     ex.value.response["Error"]["Code"].should.equal("ValidationException")
     ex.value.response["Error"]["Message"].should.contain(
@@ -497,6 +549,14 @@ def test_request_certificate_no_san():
     resp2 = client.describe_certificate(CertificateArn=resp["CertificateArn"])
     resp2.should.contain("Certificate")
 
+    resp2["Certificate"].should.have.key("RenewalEligibility").equals("INELIGIBLE")
+    resp2["Certificate"].should.have.key("Options")
+    resp2["Certificate"].should.have.key("DomainValidationOptions").length_of(1)
+
+    validation_option = resp2["Certificate"]["DomainValidationOptions"][0]
+    validation_option.should.have.key("DomainName").equals("google.com")
+    validation_option.should.have.key("ValidationDomain").equals("google.com")
+
 
 # Also tests the SAN code
 @mock_acm
@@ -546,7 +606,7 @@ def test_request_certificate_issued_status_with_wait_in_envvar():
     client = boto3.client("acm", region_name="eu-central-1")
 
     with freeze_time("2012-01-01 12:00:00"):
-        resp = client.request_certificate(DomainName="google.com",)
+        resp = client.request_certificate(DomainName="google.com")
     arn = resp["CertificateArn"]
 
     with freeze_time("2012-01-01 12:00:00"):
@@ -612,3 +672,38 @@ def test_request_certificate_with_mutiple_times():
         )
     arn = resp["CertificateArn"]
     arn.should_not.equal(original_arn)
+
+
+@mock_acm
+@mock_elb
+def test_elb_acm_in_use_by():
+    acm_client = boto3.client("acm", region_name="us-west-2")
+    elb_client = boto3.client("elb", region_name="us-west-2")
+
+    acm_request_response = acm_client.request_certificate(
+        DomainName="fake.domain.com",
+        DomainValidationOptions=[
+            {"DomainName": "fake.domain.com", "ValidationDomain": "domain.com"}
+        ],
+    )
+
+    certificate_arn = acm_request_response["CertificateArn"]
+
+    create_load_balancer_request = elb_client.create_load_balancer(
+        LoadBalancerName="test",
+        Listeners=[
+            {
+                "Protocol": "https",
+                "LoadBalancerPort": 443,
+                "InstanceProtocol": "http",
+                "InstancePort": 80,
+                "SSLCertificateId": certificate_arn,
+            }
+        ],
+    )
+
+    response = acm_client.describe_certificate(CertificateArn=certificate_arn)
+
+    response["Certificate"]["InUseBy"].should.equal(
+        [create_load_balancer_request["DNSName"]]
+    )

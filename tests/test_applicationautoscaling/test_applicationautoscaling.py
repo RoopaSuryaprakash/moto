@@ -1,10 +1,8 @@
-from __future__ import unicode_literals
-
 import boto3
-import botocore
 import pytest
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 from moto import mock_applicationautoscaling, mock_ecs
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 
 DEFAULT_REGION = "us-east-1"
 DEFAULT_ECS_CLUSTER = "default"
@@ -179,7 +177,7 @@ def test_describe_scalable_targets_next_token_success():
 
 
 def register_scalable_target(client, **kwargs):
-    """ Build a default scalable target object for use in tests. """
+    """Build a default scalable target object for use in tests."""
     return client.register_scalable_target(
         ServiceNamespace=kwargs.get("ServiceNamespace", DEFAULT_SERVICE_NAMESPACE),
         ResourceId=kwargs.get("ResourceId", DEFAULT_RESOURCE_ID),
@@ -315,8 +313,34 @@ def test_register_scalable_target_updates_existing_target():
     )
 
 
+@pytest.mark.parametrize(
+    ["policy_type", "policy_body_kwargs"],
+    [
+        [
+            "TargetTrackingScaling",
+            {
+                "TargetTrackingScalingPolicyConfiguration": {
+                    "TargetValue": 70.0,
+                    "PredefinedMetricSpecification": {
+                        "PredefinedMetricType": "SageMakerVariantInvocationsPerInstance"
+                    },
+                }
+            },
+        ],
+        [
+            "TargetTrackingScaling",
+            {
+                "StepScalingPolicyConfiguration": {
+                    "AdjustmentType": "ChangeCapacity",
+                    "StepAdjustments": [{"ScalingAdjustment": 10}],
+                    "MinAdjustmentMagnitude": 2,
+                },
+            },
+        ],
+    ],
+)
 @mock_applicationautoscaling
-def test_put_scaling_policy():
+def test_put_scaling_policy(policy_type, policy_body_kwargs):
     client = boto3.client("application-autoscaling", region_name=DEFAULT_REGION)
     namespace = "sagemaker"
     resource_id = "endpoint/MyEndPoint/variant/MyVariant"
@@ -331,13 +355,6 @@ def test_put_scaling_policy():
     )
 
     policy_name = "MyPolicy"
-    policy_type = "TargetTrackingScaling"
-    policy_body = {
-        "TargetValue": 70.0,
-        "PredefinedMetricSpecification": {
-            "PredefinedMetricType": "SageMakerVariantInvocationsPerInstance"
-        },
-    }
 
     with pytest.raises(client.exceptions.ValidationException) as e:
         client.put_scaling_policy(
@@ -346,7 +363,7 @@ def test_put_scaling_policy():
             ResourceId=resource_id,
             ScalableDimension=scalable_dimension,
             PolicyType="ABCDEFG",
-            TargetTrackingScalingPolicyConfiguration=policy_body,
+            **policy_body_kwargs,
         )
     e.value.response["Error"]["Message"].should.match(
         r"Unknown policy type .* specified."
@@ -358,7 +375,7 @@ def test_put_scaling_policy():
         ResourceId=resource_id,
         ScalableDimension=scalable_dimension,
         PolicyType=policy_type,
-        TargetTrackingScalingPolicyConfiguration=policy_body,
+        **policy_body_kwargs,
     )
     response["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
     response["PolicyARN"].should.match(
@@ -519,3 +536,139 @@ def test_deregister_scalable_target():
             ScalableDimension=scalable_dimension,
         )
     e.value.response["Error"]["Message"].should.match(r"No scalable target found .*")
+
+
+@mock_applicationautoscaling
+def test_delete_scheduled_action():
+    client = boto3.client("application-autoscaling", region_name="eu-west-1")
+    resp = client.describe_scheduled_actions(ServiceNamespace="ecs")
+    resp.should.have.key("ScheduledActions").length_of(0)
+
+    for i in range(3):
+        client.put_scheduled_action(
+            ServiceNamespace="ecs",
+            ScheduledActionName=f"ecs_action_{i}",
+            ResourceId=f"ecs:cluster:{i}",
+            ScalableDimension="ecs:service:DesiredCount",
+        )
+
+    resp = client.describe_scheduled_actions(ServiceNamespace="ecs")
+    resp.should.have.key("ScheduledActions").length_of(3)
+
+    client.delete_scheduled_action(
+        ServiceNamespace="ecs",
+        ScheduledActionName="ecs_action_0",
+        ResourceId="ecs:cluster:0",
+        ScalableDimension="ecs:service:DesiredCount",
+    )
+
+    resp = client.describe_scheduled_actions(ServiceNamespace="ecs")
+    resp.should.have.key("ScheduledActions").length_of(2)
+
+
+@mock_applicationautoscaling
+def test_describe_scheduled_actions():
+    client = boto3.client("application-autoscaling", region_name="eu-west-1")
+    resp = client.describe_scheduled_actions(ServiceNamespace="ecs")
+    resp.should.have.key("ScheduledActions").length_of(0)
+
+    for i in range(3):
+        client.put_scheduled_action(
+            ServiceNamespace="ecs",
+            ScheduledActionName=f"ecs_action_{i}",
+            ResourceId=f"ecs:cluster:{i}",
+            ScalableDimension="ecs:service:DesiredCount",
+        )
+        client.put_scheduled_action(
+            ServiceNamespace="dynamodb",
+            ScheduledActionName=f"ddb_action_{i}",
+            ResourceId=f"table/table_{i}",
+            ScalableDimension="dynamodb:table:ReadCapacityUnits",
+        )
+
+    resp = client.describe_scheduled_actions(ServiceNamespace="ecs")
+    resp.should.have.key("ScheduledActions").length_of(3)
+
+    resp = client.describe_scheduled_actions(ServiceNamespace="ec2")
+    resp.should.have.key("ScheduledActions").length_of(0)
+
+    resp = client.describe_scheduled_actions(
+        ServiceNamespace="dynamodb", ScheduledActionNames=["ddb_action_0"]
+    )
+    resp.should.have.key("ScheduledActions").length_of(1)
+
+    resp = client.describe_scheduled_actions(
+        ServiceNamespace="dynamodb",
+        ResourceId="table/table_0",
+        ScalableDimension="dynamodb:table:ReadCapacityUnits",
+    )
+    resp.should.have.key("ScheduledActions").length_of(1)
+
+    resp = client.describe_scheduled_actions(
+        ServiceNamespace="dynamodb",
+        ResourceId="table/table_0",
+        ScalableDimension="dynamodb:table:WriteCapacityUnits",
+    )
+    resp.should.have.key("ScheduledActions").length_of(0)
+
+
+@mock_applicationautoscaling
+def test_put_scheduled_action():
+    client = boto3.client("application-autoscaling", region_name="ap-southeast-1")
+    client.put_scheduled_action(
+        ServiceNamespace="ecs",
+        ScheduledActionName="action_name",
+        ResourceId="ecs:cluster:x",
+        ScalableDimension="ecs:service:DesiredCount",
+    )
+
+    resp = client.describe_scheduled_actions(ServiceNamespace="ecs")
+    resp.should.have.key("ScheduledActions").length_of(1)
+
+    action = resp["ScheduledActions"][0]
+    action.should.have.key("ScheduledActionName").equals("action_name")
+    action.should.have.key("ScheduledActionARN").equals(
+        f"arn:aws:autoscaling:ap-southeast-1:{ACCOUNT_ID}:scheduledAction:ecs:scheduledActionName/action_name"
+    )
+    action.should.have.key("ServiceNamespace").equals("ecs")
+    action.should.have.key("ResourceId").equals("ecs:cluster:x")
+    action.should.have.key("ScalableDimension").equals("ecs:service:DesiredCount")
+    action.should.have.key("CreationTime")
+    action.shouldnt.have.key("ScalableTargetAction")
+
+
+@mock_applicationautoscaling
+def test_put_scheduled_action__use_update():
+    client = boto3.client("application-autoscaling", region_name="ap-southeast-1")
+    client.put_scheduled_action(
+        ServiceNamespace="ecs",
+        ScheduledActionName="action_name",
+        ResourceId="ecs:cluster:x",
+        ScalableDimension="ecs:service:DesiredCount",
+    )
+    client.put_scheduled_action(
+        ServiceNamespace="ecs",
+        ScheduledActionName="action_name_updated",
+        ResourceId="ecs:cluster:x",
+        ScalableDimension="ecs:service:DesiredCount",
+        ScalableTargetAction={
+            "MinCapacity": 12,
+            "MaxCapacity": 23,
+        },
+    )
+
+    resp = client.describe_scheduled_actions(ServiceNamespace="ecs")
+    resp.should.have.key("ScheduledActions").length_of(1)
+
+    action = resp["ScheduledActions"][0]
+    action.should.have.key("ScheduledActionName").equals("action_name_updated")
+    action.should.have.key("ScheduledActionARN").equals(
+        f"arn:aws:autoscaling:ap-southeast-1:{ACCOUNT_ID}:scheduledAction:ecs:scheduledActionName/action_name"
+    )
+    action.should.have.key("ServiceNamespace").equals("ecs")
+    action.should.have.key("ResourceId").equals("ecs:cluster:x")
+    action.should.have.key("ScalableDimension").equals("ecs:service:DesiredCount")
+    action.should.have.key("CreationTime")
+    action.should.have.key("ScalableTargetAction").equals(
+        {"MaxCapacity": 23, "MinCapacity": 12}
+    )

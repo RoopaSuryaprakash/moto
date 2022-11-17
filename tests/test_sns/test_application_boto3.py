@@ -1,10 +1,8 @@
-from __future__ import unicode_literals
-
 import boto3
 from botocore.exceptions import ClientError
 from moto import mock_sns
-import sure  # noqa
-from moto.core import ACCOUNT_ID
+import sure  # noqa # pylint: disable=unused-import
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 import pytest
 
 
@@ -145,14 +143,14 @@ def test_create_duplicate_platform_endpoint():
     )
     application_arn = platform_application["PlatformApplicationArn"]
 
-    endpoint = conn.create_platform_endpoint(
+    conn.create_platform_endpoint(
         PlatformApplicationArn=application_arn,
         Token="some_unique_id",
         CustomUserData="some user data",
         Attributes={"Enabled": "false"},
     )
 
-    endpoint = conn.create_platform_endpoint.when.called_with(
+    conn.create_platform_endpoint.when.called_with(
         PlatformApplicationArn=application_arn,
         Token="some_unique_id",
         CustomUserData="some user data",
@@ -280,6 +278,31 @@ def test_set_endpoint_attributes():
 
 
 @mock_sns
+def test_delete_endpoint():
+    conn = boto3.client("sns", region_name="us-east-1")
+    platform_application = conn.create_platform_application(
+        Name="my-application", Platform="APNS", Attributes={}
+    )
+    application_arn = platform_application["PlatformApplicationArn"]
+    endpoint = conn.create_platform_endpoint(
+        PlatformApplicationArn=application_arn,
+        Token="some_unique_id",
+        CustomUserData="some user data",
+        Attributes={"Enabled": "true"},
+    )
+
+    conn.list_endpoints_by_platform_application(PlatformApplicationArn=application_arn)[
+        "Endpoints"
+    ].should.have.length_of(1)
+
+    conn.delete_endpoint(EndpointArn=endpoint["EndpointArn"])
+
+    conn.list_endpoints_by_platform_application(PlatformApplicationArn=application_arn)[
+        "Endpoints"
+    ].should.have.length_of(0)
+
+
+@mock_sns
 def test_publish_to_platform_endpoint():
     conn = boto3.client("sns", region_name="us-east-1")
     platform_application = conn.create_platform_application(
@@ -352,3 +375,26 @@ def test_get_sms_attributes_filtered():
     response["attributes"].should.contain("DefaultSMSType")
     response["attributes"].should_not.contain("test")
     response["attributes"]["DefaultSMSType"].should.equal("Transactional")
+
+
+@mock_sns
+def test_delete_endpoints_of_delete_app():
+    conn = boto3.client("sns", region_name="us-east-1")
+
+    platform_app_arn = conn.create_platform_application(
+        Name="app-test-kevs", Platform="GCM", Attributes={"PlatformCredential": "test"}
+    )["PlatformApplicationArn"]
+
+    endpoint_arn = conn.create_platform_endpoint(
+        PlatformApplicationArn=platform_app_arn,
+        Token="test",
+    )["EndpointArn"]
+
+    conn.delete_platform_application(PlatformApplicationArn=platform_app_arn)
+
+    with pytest.raises(conn.exceptions.NotFoundException) as excinfo:
+        conn.get_endpoint_attributes(EndpointArn=endpoint_arn)
+    error = excinfo.value.response["Error"]
+    error["Type"].should.equal("Sender")
+    error["Code"].should.equal("NotFound")
+    error["Message"].should.equal("Endpoint does not exist")

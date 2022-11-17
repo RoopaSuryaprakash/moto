@@ -1,10 +1,8 @@
-from __future__ import unicode_literals
-
 import datetime
 
 from moto.core.utils import iso_8601_datetime_with_milliseconds
 from ..exceptions import InvalidParameterCombination
-from .base import BaseRDSBackend, BaseRDSModel
+from .base import BaseRDSModel
 
 
 EVENT_MAP = {
@@ -66,9 +64,8 @@ class Event(object):
         return "{}-{}-{}".format(self.source_identifier, self.source_type, self.date)
 
 
-class EventBackend(BaseRDSBackend):
+class EventBackend:
     def __init__(self):
-        super(EventBackend, self).__init__()
         self.events = []
 
     def add_event(self, event_type, resource):
@@ -78,7 +75,7 @@ class EventBackend(BaseRDSBackend):
     def list_events_for_resource(self, arn):
         return [e for e in self.events if e.source_arn == arn]
 
-    def describe_events(self, source_identifier=None, source_type=None, **kwargs):
+    def describe_events(self, source_identifier=None, source_type=None, **_):
         if source_identifier is not None and source_type is None:
             raise InvalidParameterCombination(
                 "Cannot specify source identifier without source type"

@@ -1,17 +1,19 @@
-from __future__ import unicode_literals
-
 import hashlib
-import random
 import re
-import string
 import time
-import uuid
 from collections import OrderedDict
-from datetime import datetime
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization, hashes
 
-from boto3 import Session
+from datetime import datetime, timedelta
 
-from moto.core import BaseBackend, BaseModel
+from .utils import PAGINATION_MODEL
+
+from moto.core import BaseBackend, BackendDict, BaseModel
+from moto.moto_api._internal import mock_random as random
+from moto.utilities.paginator import paginate
 from .exceptions import (
     CertificateStateException,
     DeleteConflictException,
@@ -20,22 +22,34 @@ from .exceptions import (
     InvalidStateTransitionException,
     VersionConflictException,
     ResourceAlreadyExistsException,
+    VersionsLimitExceededException,
+    ThingStillAttached,
 )
-from moto.utilities.utils import random_string
 
 
 class FakeThing(BaseModel):
-    def __init__(self, thing_name, thing_type, attributes, region_name):
+    def __init__(self, thing_name, thing_type, attributes, account_id, region_name):
         self.region_name = region_name
         self.thing_name = thing_name
         self.thing_type = thing_type
         self.attributes = attributes
-        self.arn = "arn:aws:iot:%s:1:thing/%s" % (self.region_name, thing_name)
+        self.arn = f"arn:aws:iot:{region_name}:{account_id}:thing/{thing_name}"
         self.version = 1
         # TODO: we need to handle "version"?
 
         # for iot-data
         self.thing_shadow = None
+
+    def matches(self, query_string):
+        if query_string == "*":
+            return True
+        if query_string.startswith("thingName:"):
+            qs = query_string[10:].replace("*", ".*").replace("?", ".")
+            return re.search(f"^{qs}$", self.thing_name)
+        if query_string.startswith("attributes."):
+            k, v = query_string[11:].split(":")
+            return self.attributes.get(k) == v
+        return query_string in self.thing_name
 
     def to_dict(self, include_default_client_id=False):
         obj = {
@@ -56,7 +70,7 @@ class FakeThingType(BaseModel):
         self.region_name = region_name
         self.thing_type_name = thing_type_name
         self.thing_type_properties = thing_type_properties
-        self.thing_type_id = str(uuid.uuid4())  # I don't know the rule of id
+        self.thing_type_id = str(random.uuid4())  # I don't know the rule of id
         t = time.time()
         self.metadata = {"deprecated": False, "creationDate": int(t * 1000) / 1000.0}
         self.arn = "arn:aws:iot:%s:1:thingtype/%s" % (self.region_name, thing_type_name)
@@ -82,7 +96,7 @@ class FakeThingGroup(BaseModel):
     ):
         self.region_name = region_name
         self.thing_group_name = thing_group_name
-        self.thing_group_id = str(uuid.uuid4())  # I don't know the rule of id
+        self.thing_group_id = str(random.uuid4())  # I don't know the rule of id
         self.version = 1  # TODO: tmp
         self.parent_group_name = parent_group_name
         self.thing_group_properties = thing_group_properties or {}
@@ -94,7 +108,7 @@ class FakeThingGroup(BaseModel):
             if "rootToParentThingGroups" not in self.metadata:
                 self.metadata["rootToParentThingGroups"] = []
             # search for parent arn
-            for thing_group_arn, thing_group in thing_groups.items():
+            for thing_group in thing_groups.values():
                 if thing_group.thing_group_name == parent_group_name:
                     parent_thing_group_structure = thing_group
                     break
@@ -131,25 +145,23 @@ class FakeThingGroup(BaseModel):
 
 
 class FakeCertificate(BaseModel):
-    def __init__(self, certificate_pem, status, region_name, ca_certificate_pem=None):
+    def __init__(
+        self, certificate_pem, status, account_id, region_name, ca_certificate_id=None
+    ):
         m = hashlib.sha256()
         m.update(certificate_pem.encode("utf-8"))
         self.certificate_id = m.hexdigest()
-        self.arn = "arn:aws:iot:%s:1:cert/%s" % (region_name, self.certificate_id)
+        self.arn = f"arn:aws:iot:{region_name}:{account_id}:cert/{self.certificate_id}"
         self.certificate_pem = certificate_pem
         self.status = status
 
-        # TODO: must adjust
-        self.owner = "1"
+        self.owner = account_id
         self.transfer_data = {}
         self.creation_date = time.time()
         self.last_modified_date = self.creation_date
-
-        self.ca_certificate_id = None
-        self.ca_certificate_pem = ca_certificate_pem
-        if ca_certificate_pem:
-            m.update(ca_certificate_pem.encode("utf-8"))
-            self.ca_certificate_id = m.hexdigest()
+        self.validity_not_before = time.time() - 86400
+        self.validity_not_after = time.time() + 86400
+        self.ca_certificate_id = ca_certificate_id
 
     def to_dict(self):
         return {
@@ -174,17 +186,38 @@ class FakeCertificate(BaseModel):
             "ownedBy": self.owner,
             "creationDate": self.creation_date,
             "lastModifiedDate": self.last_modified_date,
+            "validity": {
+                "notBefore": self.validity_not_before,
+                "notAfter": self.validity_not_after,
+            },
             "transferData": self.transfer_data,
         }
 
 
+class FakeCaCertificate(FakeCertificate):
+    def __init__(
+        self, ca_certificate, status, account_id, region_name, registration_config
+    ):
+        super().__init__(
+            certificate_pem=ca_certificate,
+            status=status,
+            account_id=account_id,
+            region_name=region_name,
+            ca_certificate_id=None,
+        )
+        self.registration_config = registration_config
+
+
 class FakePolicy(BaseModel):
-    def __init__(self, name, document, region_name, default_version_id="1"):
+    def __init__(self, name, document, account_id, region_name, default_version_id="1"):
         self.name = name
         self.document = document
-        self.arn = "arn:aws:iot:%s:1:policy/%s" % (region_name, name)
+        self.arn = f"arn:aws:iot:{region_name}:{account_id}:policy/{name}"
         self.default_version_id = default_version_id
-        self.versions = [FakePolicyVersion(self.name, document, True, region_name)]
+        self.versions = [
+            FakePolicyVersion(self.name, document, True, account_id, region_name)
+        ]
+        self._max_version_id = self.versions[0]._version_id
 
     def to_get_dict(self):
         return {
@@ -207,15 +240,21 @@ class FakePolicy(BaseModel):
 
 
 class FakePolicyVersion(object):
-    def __init__(self, policy_name, document, is_default, region_name):
+    def __init__(
+        self, policy_name, document, is_default, account_id, region_name, version_id=1
+    ):
         self.name = policy_name
-        self.arn = "arn:aws:iot:%s:1:policy/%s" % (region_name, policy_name)
+        self.arn = f"arn:aws:iot:{region_name}:{account_id}:policy/{policy_name}"
         self.document = document or {}
         self.is_default = is_default
-        self.version_id = "1"
+        self._version_id = version_id
 
         self.create_datetime = time.mktime(datetime(2015, 1, 1).timetuple())
         self.last_modified_datetime = time.mktime(datetime(2015, 1, 2).timetuple())
+
+    @property
+    def version_id(self):
+        return str(self._version_id)
 
     def to_get_dict(self):
         return {
@@ -331,12 +370,12 @@ class FakeJobExecution(BaseModel):
         thing_arn,
         status="QUEUED",
         force_canceled=False,
-        status_details_map={},
+        status_details_map=None,
     ):
         self.job_id = job_id
         self.status = status  # IN_PROGRESS | CANCELED | COMPLETED
         self.force_canceled = force_canceled
-        self.status_details_map = status_details_map
+        self.status_details_map = status_details_map or {}
         self.thing_arn = thing_arn
         self.queued_at = time.mktime(datetime(2015, 1, 1).timetuple())
         self.started_at = time.mktime(datetime(2015, 1, 1).timetuple())
@@ -391,22 +430,20 @@ class FakeEndpoint(BaseModel):
                 "operation: Endpoint type %s not recognized." % endpoint_type
             )
         self.region_name = region_name
-        data_identifier = random_string(14)
+        identifier = random.get_random_string(length=14, lower_case=True)
         if endpoint_type == "iot:Data":
             self.endpoint = "{i}.iot.{r}.amazonaws.com".format(
-                i=data_identifier, r=self.region_name
+                i=identifier, r=self.region_name
             )
         elif "iot:Data-ATS" in endpoint_type:
             self.endpoint = "{i}-ats.iot.{r}.amazonaws.com".format(
-                i=data_identifier, r=self.region_name
+                i=identifier, r=self.region_name
             )
         elif "iot:CredentialProvider" in endpoint_type:
-            identifier = random_string(14)
             self.endpoint = "{i}.credentials.iot.{r}.amazonaws.com".format(
                 i=identifier, r=self.region_name
             )
         elif "iot:Jobs" in endpoint_type:
-            identifier = random_string(14)
             self.endpoint = "{i}.jobs.iot.{r}.amazonaws.com".format(
                 i=identifier, r=self.region_name
             )
@@ -478,26 +515,134 @@ class FakeRule(BaseModel):
         }
 
 
+class FakeDomainConfiguration(BaseModel):
+    def __init__(
+        self,
+        region_name,
+        domain_configuration_name,
+        domain_name,
+        server_certificate_arns,
+        domain_configuration_status,
+        service_type,
+        authorizer_config,
+        domain_type,
+    ):
+        if service_type and service_type not in ["DATA", "CREDENTIAL_PROVIDER", "JOBS"]:
+            raise InvalidRequestException(
+                "An error occurred (InvalidRequestException) when calling the DescribeDomainConfiguration "
+                "operation: Service type %s not recognized." % service_type
+            )
+        self.domain_configuration_name = domain_configuration_name
+        self.domain_configuration_arn = "arn:aws:iot:%s:1:domainconfiguration/%s/%s" % (
+            region_name,
+            domain_configuration_name,
+            random.get_random_string(length=5),
+        )
+        self.domain_name = domain_name
+        self.server_certificates = []
+        if server_certificate_arns:
+            for sc in server_certificate_arns:
+                self.server_certificates.append(
+                    {"serverCertificateArn": sc, "serverCertificateStatus": "VALID"}
+                )
+        self.domain_configuration_status = domain_configuration_status
+        self.service_type = service_type
+        self.authorizer_config = authorizer_config
+        self.domain_type = domain_type
+        self.last_status_change_date = time.time()
+
+    def to_description_dict(self):
+        return {
+            "domainConfigurationName": self.domain_configuration_name,
+            "domainConfigurationArn": self.domain_configuration_arn,
+            "domainName": self.domain_name,
+            "serverCertificates": self.server_certificates,
+            "authorizerConfig": self.authorizer_config,
+            "domainConfigurationStatus": self.domain_configuration_status,
+            "serviceType": self.service_type,
+            "domainType": self.domain_type,
+            "lastStatusChangeDate": self.last_status_change_date,
+        }
+
+    def to_dict(self):
+        return {
+            "domainConfigurationName": self.domain_configuration_name,
+            "domainConfigurationArn": self.domain_configuration_arn,
+        }
+
+
 class IoTBackend(BaseBackend):
-    def __init__(self, region_name=None):
-        super(IoTBackend, self).__init__()
-        self.region_name = region_name
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         self.things = OrderedDict()
         self.jobs = OrderedDict()
         self.job_executions = OrderedDict()
         self.thing_types = OrderedDict()
         self.thing_groups = OrderedDict()
+        self.ca_certificates = OrderedDict()
         self.certificates = OrderedDict()
         self.policies = OrderedDict()
         self.principal_policies = OrderedDict()
         self.principal_things = OrderedDict()
         self.rules = OrderedDict()
         self.endpoint = None
+        self.domain_configurations = OrderedDict()
 
-    def reset(self):
-        region_name = self.region_name
-        self.__dict__ = {}
-        self.__init__(region_name)
+    @staticmethod
+    def default_vpc_endpoint_service(service_region, zones):
+        """Default VPC endpoint service."""
+        return BaseBackend.default_vpc_endpoint_service_factory(
+            service_region, zones, "iot"
+        ) + BaseBackend.default_vpc_endpoint_service_factory(
+            service_region,
+            zones,
+            "data.iot",
+            private_dns_names=False,
+            special_service_name="iot.data",
+            policy_supported=False,
+        )
+
+    def create_certificate_from_csr(self, csr, set_as_active):
+        cert = x509.load_pem_x509_csr(csr.encode("utf-8"), default_backend())
+        pem = self._generate_certificate_pem(
+            domain_name="example.com", subject=cert.subject
+        )
+        return self.register_certificate(
+            pem, ca_certificate_pem=None, set_as_active=set_as_active, status="INACTIVE"
+        )
+
+    def _generate_certificate_pem(self, domain_name, subject):
+        sans = set()
+
+        sans.add(domain_name)
+        sans = [x509.DNSName(item) for item in sans]
+
+        key = rsa.generate_private_key(
+            public_exponent=65537, key_size=2048, backend=default_backend()
+        )
+        issuer = x509.Name(
+            [  # C = US, O = Moto, OU = Server CA 1B, CN = Moto
+                x509.NameAttribute(x509.NameOID.COUNTRY_NAME, "US"),
+                x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, "Moto"),
+                x509.NameAttribute(
+                    x509.NameOID.ORGANIZATIONAL_UNIT_NAME, "Server CA 1B"
+                ),
+                x509.NameAttribute(x509.NameOID.COMMON_NAME, "Moto"),
+            ]
+        )
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.utcnow())
+            .not_valid_after(datetime.utcnow() + timedelta(days=365))
+            .add_extension(x509.SubjectAlternativeName(sans), critical=False)
+            .sign(key, hashes.SHA512(), default_backend())
+        )
+
+        return cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
 
     def create_thing(self, thing_name, thing_type_name, attribute_payload):
         thing_types = self.list_thing_types()
@@ -509,13 +654,21 @@ class IoTBackend(BaseBackend):
             if len(filtered_thing_types) == 0:
                 raise ResourceNotFoundException()
             thing_type = filtered_thing_types[0]
+
+            if thing_type.metadata["deprecated"]:
+                # note - typo (depreated) exists also in the original exception.
+                raise InvalidRequestException(
+                    msg=f"Can not create new thing with depreated thing type:{thing_type_name}"
+                )
         if attribute_payload is None:
             attributes = {}
         elif "attributes" not in attribute_payload:
             attributes = {}
         else:
             attributes = attribute_payload["attributes"]
-        thing = FakeThing(thing_name, thing_type, attributes, self.region_name)
+        thing = FakeThing(
+            thing_name, thing_type, attributes, self.account_id, self.region_name
+        )
         self.things[thing.arn] = thing
         return thing.thing_name, thing.arn
 
@@ -605,16 +758,17 @@ class IoTBackend(BaseBackend):
         self.endpoint = FakeEndpoint(endpoint_type, self.region_name)
         return self.endpoint
 
-    def delete_thing(self, thing_name, expected_version):
-        # TODO: handle expected_version
+    def delete_thing(self, thing_name):
+        """
+        The ExpectedVersion-parameter is not yet implemented
+        """
 
         # can raise ResourceNotFoundError
         thing = self.describe_thing(thing_name)
 
-        # detach all principals
         for k in list(self.principal_things.keys()):
             if k[1] == thing_name:
-                del self.principal_things[k]
+                raise ThingStillAttached(thing_name)
 
         del self.things[thing.arn]
 
@@ -623,14 +777,25 @@ class IoTBackend(BaseBackend):
         thing_type = self.describe_thing_type(thing_type_name)
         del self.thing_types[thing_type.arn]
 
+    def deprecate_thing_type(self, thing_type_name, undo_deprecate):
+        thing_types = [
+            _ for _ in self.thing_types.values() if _.thing_type_name == thing_type_name
+        ]
+        if len(thing_types) == 0:
+            raise ResourceNotFoundException()
+        thing_types[0].metadata["deprecated"] = not undo_deprecate
+        return thing_types[0]
+
     def update_thing(
         self,
         thing_name,
         thing_type_name,
         attribute_payload,
-        expected_version,
         remove_thing_type,
     ):
+        """
+        The ExpectedVersion-parameter is not yet implemented
+        """
         # if attributes payload = {}, nothing
         thing = self.describe_thing(thing_name)
         thing_type = None
@@ -647,6 +812,12 @@ class IoTBackend(BaseBackend):
             if len(filtered_thing_types) == 0:
                 raise ResourceNotFoundException()
             thing_type = filtered_thing_types[0]
+
+            if thing_type.metadata["deprecated"]:
+                raise InvalidRequestException(
+                    msg=f"Can not update a thing to use deprecated thing type: {thing_type_name}"
+                )
+
             thing.thing_type = thing_type
 
         if remove_thing_type:
@@ -661,38 +832,42 @@ class IoTBackend(BaseBackend):
             else:
                 thing.attributes.update(attributes)
 
-    def _random_string(self):
-        n = 20
-        random_str = "".join(
-            [random.choice(string.ascii_letters + string.digits) for i in range(n)]
-        )
-        return random_str
-
     def create_keys_and_certificate(self, set_as_active):
         # implement here
         # caCertificate can be blank
         key_pair = {
-            "PublicKey": self._random_string(),
-            "PrivateKey": self._random_string(),
+            "PublicKey": random.get_random_string(),
+            "PrivateKey": random.get_random_string(),
         }
-        certificate_pem = self._random_string()
+        certificate_pem = random.get_random_string()
         status = "ACTIVE" if set_as_active else "INACTIVE"
-        certificate = FakeCertificate(certificate_pem, status, self.region_name)
+        certificate = FakeCertificate(
+            certificate_pem, status, self.account_id, self.region_name
+        )
         self.certificates[certificate.certificate_id] = certificate
         return certificate, key_pair
 
+    def delete_ca_certificate(self, certificate_id):
+        cert = self.describe_ca_certificate(certificate_id)
+        self._validation_delete(cert)
+        del self.ca_certificates[certificate_id]
+
     def delete_certificate(self, certificate_id):
         cert = self.describe_certificate(certificate_id)
+        self._validation_delete(cert)
+        del self.certificates[certificate_id]
+
+    def _validation_delete(self, cert):
         if cert.status == "ACTIVE":
             raise CertificateStateException(
                 "Certificate must be deactivated (not ACTIVE) before deletion.",
-                certificate_id,
+                cert.certificate_id,
             )
 
         certs = [
             k[0]
             for k, v in self.principal_things.items()
-            if self._get_principal(k[0]).certificate_id == certificate_id
+            if self._get_principal(k[0]).certificate_id == cert.certificate_id
         ]
         if len(certs) > 0:
             raise DeleteConflictException(
@@ -702,7 +877,7 @@ class IoTBackend(BaseBackend):
         certs = [
             k[0]
             for k, v in self.principal_policies.items()
-            if self._get_principal(k[0]).certificate_id == certificate_id
+            if self._get_principal(k[0]).certificate_id == cert.certificate_id
         ]
         if len(certs) > 0:
             raise DeleteConflictException(
@@ -710,7 +885,10 @@ class IoTBackend(BaseBackend):
                 % certs[0]
             )
 
-        del self.certificates[certificate_id]
+    def describe_ca_certificate(self, certificate_id):
+        if certificate_id not in self.ca_certificates:
+            raise ResourceNotFoundException()
+        return self.ca_certificates[certificate_id]
 
     def describe_certificate(self, certificate_id):
         certs = [
@@ -720,35 +898,97 @@ class IoTBackend(BaseBackend):
             raise ResourceNotFoundException()
         return certs[0]
 
+    def get_registration_code(self):
+        return str(random.uuid4())
+
     def list_certificates(self):
+        """
+        Pagination is not yet implemented
+        """
         return self.certificates.values()
 
-    def __raise_if_certificate_already_exists(self, certificate_id):
+    def list_certificates_by_ca(self, ca_certificate_id):
+        """
+        Pagination is not yet implemented
+        """
+        return [
+            cert
+            for cert in self.certificates.values()
+            if cert.ca_certificate_id == ca_certificate_id
+        ]
+
+    def __raise_if_certificate_already_exists(self, certificate_id, certificate_arn):
         if certificate_id in self.certificates:
             raise ResourceAlreadyExistsException(
-                "The certificate is already provisioned or registered"
+                "The certificate is already provisioned or registered",
+                certificate_id,
+                certificate_arn,
             )
+
+    def register_ca_certificate(
+        self,
+        ca_certificate,
+        set_as_active,
+        registration_config,
+    ):
+        """
+        The VerificationCertificate-parameter is not yet implemented
+        """
+        certificate = FakeCaCertificate(
+            ca_certificate=ca_certificate,
+            status="ACTIVE" if set_as_active else "INACTIVE",
+            account_id=self.account_id,
+            region_name=self.region_name,
+            registration_config=registration_config,
+        )
+
+        self.ca_certificates[certificate.certificate_id] = certificate
+        return certificate
+
+    def _find_ca_certificate(self, ca_certificate_pem):
+        for ca_cert in self.ca_certificates.values():
+            if ca_cert.certificate_pem == ca_certificate_pem:
+                return ca_cert.certificate_id
+        return None
 
     def register_certificate(
         self, certificate_pem, ca_certificate_pem, set_as_active, status
     ):
+        ca_certificate_id = self._find_ca_certificate(ca_certificate_pem)
         certificate = FakeCertificate(
             certificate_pem,
             "ACTIVE" if set_as_active else status,
+            self.account_id,
             self.region_name,
-            ca_certificate_pem,
+            ca_certificate_id,
         )
-        self.__raise_if_certificate_already_exists(certificate.certificate_id)
+        self.__raise_if_certificate_already_exists(
+            certificate.certificate_id, certificate_arn=certificate.arn
+        )
 
         self.certificates[certificate.certificate_id] = certificate
         return certificate
 
     def register_certificate_without_ca(self, certificate_pem, status):
-        certificate = FakeCertificate(certificate_pem, status, self.region_name)
-        self.__raise_if_certificate_already_exists(certificate.certificate_id)
+        certificate = FakeCertificate(
+            certificate_pem, status, self.account_id, self.region_name
+        )
+        self.__raise_if_certificate_already_exists(
+            certificate.certificate_id, certificate_arn=certificate.arn
+        )
 
         self.certificates[certificate.certificate_id] = certificate
         return certificate
+
+    def update_ca_certificate(self, certificate_id, new_status, config):
+        """
+        The newAutoRegistrationStatus and removeAutoRegistration-parameters are not yet implemented
+        """
+        cert = self.describe_ca_certificate(certificate_id)
+        if new_status is not None:
+            cert.status = new_status
+        if config is not None:
+            cert.registration_config = config
 
     def update_certificate(self, certificate_id, new_status):
         cert = self.describe_certificate(certificate_id)
@@ -756,7 +996,16 @@ class IoTBackend(BaseBackend):
         cert.status = new_status
 
     def create_policy(self, policy_name, policy_document):
-        policy = FakePolicy(policy_name, policy_document, self.region_name)
+        if policy_name in self.policies:
+            current_policy = self.policies[policy_name]
+            raise ResourceAlreadyExistsException(
+                f"Policy cannot be created - name already exists (name={policy_name})",
+                current_policy.name,
+                current_policy.arn,
+            )
+        policy = FakePolicy(
+            policy_name, policy_document, self.account_id, self.region_name
+        )
         self.policies[policy.name] = policy
         return policy
 
@@ -793,7 +1042,6 @@ class IoTBackend(BaseBackend):
         return policies[0]
 
     def delete_policy(self, policy_name):
-
         policies = [
             k[1] for k, v in self.principal_policies.items() if k[1] == policy_name
         ]
@@ -804,17 +1052,30 @@ class IoTBackend(BaseBackend):
             )
 
         policy = self.get_policy(policy_name)
+        if len(policy.versions) > 1:
+            raise DeleteConflictException(
+                "Cannot delete the policy because it has one or more policy versions attached to it (name=%s)"
+                % policy_name
+            )
         del self.policies[policy.name]
 
     def create_policy_version(self, policy_name, policy_document, set_as_default):
         policy = self.get_policy(policy_name)
         if not policy:
             raise ResourceNotFoundException()
+        if len(policy.versions) >= 5:
+            raise VersionsLimitExceededException(policy_name)
+
+        policy._max_version_id += 1
         version = FakePolicyVersion(
-            policy_name, policy_document, set_as_default, self.region_name
+            policy_name,
+            policy_document,
+            set_as_default,
+            self.account_id,
+            self.region_name,
+            version_id=policy._max_version_id,
         )
         policy.versions.append(version)
-        version.version_id = "{0}".format(len(policy.versions))
         if set_as_default:
             self.set_default_policy_version(policy_name, version.version_id)
         return version
@@ -870,9 +1131,25 @@ class IoTBackend(BaseBackend):
                 raise ResourceNotFoundException()
             principal = certs[0]
             return principal
-        else:
-            # TODO: search for cognito_ids
-            pass
+        if ":thinggroup/" in principal_arn:
+            try:
+                return self.thing_groups[principal_arn]
+            except KeyError:
+                raise ResourceNotFoundException(
+                    f"No thing group with ARN {principal_arn} exists"
+                )
+        from moto.cognitoidentity import cognitoidentity_backends
+
+        cognito = cognitoidentity_backends[self.account_id][self.region_name]
+        identities = []
+        for identity_pool in cognito.identity_pools:
+            pool_identities = cognito.pools_identities.get(identity_pool, None)
+            identities.extend(
+                [pi["IdentityId"] for pi in pool_identities.get("Identities", [])]
+            )
+            if principal_arn in identities:
+                return {"IdentityId": principal_arn}
+
         raise ResourceNotFoundException()
 
     def attach_principal_policy(self, policy_name, principal_arn):
@@ -900,10 +1177,19 @@ class IoTBackend(BaseBackend):
         return policies
 
     def list_policy_principals(self, policy_name):
+        # this action is deprecated
+        # https://docs.aws.amazon.com/iot/latest/apireference/API_ListTargetsForPolicy.html
+        # should use ListTargetsForPolicy instead
         principals = [
             k[0] for k, v in self.principal_policies.items() if k[1] == policy_name
         ]
         return principals
+
+    def list_targets_for_policy(self, policy_name):
+        # This behaviour is different to list_policy_principals which will just return an empty list
+        if policy_name not in self.policies:
+            raise ResourceNotFoundException("Policy not found")
+        return self.list_policy_principals(policy_name=policy_name)
 
     def attach_thing_principal(self, thing_name, principal_arn):
         principal = self._get_principal(principal_arn)
@@ -963,10 +1249,27 @@ class IoTBackend(BaseBackend):
             self.region_name,
             self.thing_groups,
         )
-        self.thing_groups[thing_group.arn] = thing_group
+        # this behavior is not documented, but AWS does it like that
+        # if a thing group with the same name exists, it's properties are compared
+        # if they differ, an error is returned.
+        # Otherwise, the old thing group is returned
+        if thing_group.arn in self.thing_groups:
+            current_thing_group = self.thing_groups[thing_group.arn]
+            if current_thing_group.thing_group_properties != thing_group_properties:
+                raise ResourceAlreadyExistsException(
+                    msg=f"Thing Group {thing_group_name} already exists in current account with different properties",
+                    resource_arn=thing_group.arn,
+                    resource_id=current_thing_group.thing_group_id,
+                )
+            thing_group = current_thing_group
+        else:
+            self.thing_groups[thing_group.arn] = thing_group
         return thing_group.thing_group_name, thing_group.arn, thing_group.thing_group_id
 
-    def delete_thing_group(self, thing_group_name, expected_version):
+    def delete_thing_group(self, thing_group_name):
+        """
+        The ExpectedVersion-parameter is not yet implemented
+        """
         child_groups = [
             thing_group
             for _, thing_group in self.thing_groups.items()
@@ -1021,16 +1324,23 @@ class IoTBackend(BaseBackend):
         if attribute_payload is not None and "attributes" in attribute_payload:
             do_merge = attribute_payload.get("merge", False)
             attributes = attribute_payload["attributes"]
-            if not do_merge:
-                thing_group.thing_group_properties["attributePayload"][
-                    "attributes"
-                ] = attributes
-            else:
-                thing_group.thing_group_properties["attributePayload"][
-                    "attributes"
-                ].update(attributes)
+            if attributes:
+                # might not exist yet, for example when the thing group was created without attributes
+                current_attribute_payload = (
+                    thing_group.thing_group_properties.setdefault(
+                        "attributePayload", {"attributes": {}}
+                    )
+                )
+                if not do_merge:
+                    current_attribute_payload["attributes"] = attributes
+                else:
+                    current_attribute_payload["attributes"].update(attributes)
         elif attribute_payload is not None and "attributes" not in attribute_payload:
             thing_group.attributes = {}
+        if "thingGroupDescription" in thing_group_properties:
+            thing_group.thing_group_properties[
+                "thingGroupDescription"
+            ] = thing_group_properties["thingGroupDescription"]
         thing_group.version = thing_group.version + 1
         return thing_group.version
 
@@ -1090,11 +1400,17 @@ class IoTBackend(BaseBackend):
             return
         del thing_group.things[thing.arn]
 
-    def list_things_in_thing_group(self, thing_group_name, recursive):
+    def list_things_in_thing_group(self, thing_group_name):
+        """
+        Pagination and the recursive-parameter is not yet implemented
+        """
         thing_group = self.describe_thing_group(thing_group_name)
         return thing_group.things.values()
 
     def list_thing_groups_for_thing(self, thing_name):
+        """
+        Pagination is not yet implemented
+        """
         thing = self.describe_thing(thing_name)
         all_thing_groups = self.list_thing_groups(None, None, None)
         ret = []
@@ -1191,16 +1507,10 @@ class IoTBackend(BaseBackend):
     def get_job_document(self, job_id):
         return self.jobs[job_id]
 
-    def list_jobs(
-        self,
-        status,
-        target_selection,
-        max_results,
-        token,
-        thing_group_name,
-        thing_group_id,
-    ):
-        # TODO: implement filters
+    def list_jobs(self, max_results, token):
+        """
+        The following parameter are not yet implemented: Status, TargetSelection, ThingGroupName, ThingGroupId
+        """
         all_jobs = [_.to_dict() for _ in self.jobs.values()]
         filtered_jobs = all_jobs
 
@@ -1232,9 +1542,10 @@ class IoTBackend(BaseBackend):
 
         return job_execution
 
-    def cancel_job_execution(
-        self, job_id, thing_name, force, expected_version, status_details
-    ):
+    def cancel_job_execution(self, job_id, thing_name, force):
+        """
+        The parameters ExpectedVersion and StatusDetails are not yet implemented
+        """
         job_execution = self.job_executions[(job_id, thing_name)]
 
         if job_execution is None:
@@ -1277,7 +1588,7 @@ class IoTBackend(BaseBackend):
         if status is not None:
             job_executions = list(
                 filter(
-                    lambda elem: status in elem["status"] and elem["status"] == status,
+                    lambda elem: elem["jobExecutionSummary"].get("status") == status,
                     job_executions,
                 )
             )
@@ -1297,9 +1608,8 @@ class IoTBackend(BaseBackend):
 
         return job_executions, next_token
 
-    def list_job_executions_for_thing(
-        self, thing_name, status, max_results, next_token
-    ):
+    @paginate(PAGINATION_MODEL)
+    def list_job_executions_for_thing(self, thing_name, status):
         job_executions = [
             self.job_executions[je].to_dict()
             for je in self.job_executions
@@ -1309,25 +1619,12 @@ class IoTBackend(BaseBackend):
         if status is not None:
             job_executions = list(
                 filter(
-                    lambda elem: status in elem["status"] and elem["status"] == status,
+                    lambda elem: elem["jobExecutionSummary"].get("status") == status,
                     job_executions,
                 )
             )
 
-        token = next_token
-        if token is None:
-            job_executions = job_executions[0:max_results]
-            next_token = str(max_results) if len(job_executions) > max_results else None
-        else:
-            token = int(token)
-            job_executions = job_executions[token : token + max_results]
-            next_token = (
-                str(token + max_results)
-                if len(job_executions) > token + max_results
-                else None
-            )
-
-        return job_executions, next_token
+        return job_executions
 
     def list_topic_rules(self):
         return [r.to_dict() for r in self.rules.values()]
@@ -1339,7 +1636,9 @@ class IoTBackend(BaseBackend):
 
     def create_topic_rule(self, rule_name, sql, **kwargs):
         if rule_name in self.rules:
-            raise ResourceAlreadyExistsException("Rule with given name already exists")
+            raise ResourceAlreadyExistsException(
+                "Rule with given name already exists", "", self.rules[rule_name].arn
+            )
         result = re.search(r"FROM\s+([^\s]*)", sql)
         topic = result.group(1).strip("'") if result else None
         self.rules[rule_name] = FakeRule(
@@ -1348,7 +1647,7 @@ class IoTBackend(BaseBackend):
             topic_pattern=topic,
             sql=sql,
             region_name=self.region_name,
-            **kwargs
+            **kwargs,
         )
 
     def replace_topic_rule(self, rule_name, **kwargs):
@@ -1370,11 +1669,81 @@ class IoTBackend(BaseBackend):
             raise ResourceNotFoundException()
         self.rules[rule_name].rule_disabled = True
 
+    def create_domain_configuration(
+        self,
+        domain_configuration_name,
+        domain_name,
+        server_certificate_arns,
+        authorizer_config,
+        service_type,
+    ):
+        """
+        The ValidationCertificateArn-parameter is not yet implemented
+        """
+        if domain_configuration_name in self.domain_configurations:
+            raise ResourceAlreadyExistsException(
+                "Domain configuration with given name already exists.",
+                self.domain_configurations[
+                    domain_configuration_name
+                ].domain_configuration_name,
+                self.domain_configurations[
+                    domain_configuration_name
+                ].domain_configuration_arn,
+            )
+        self.domain_configurations[domain_configuration_name] = FakeDomainConfiguration(
+            self.region_name,
+            domain_configuration_name,
+            domain_name,
+            server_certificate_arns,
+            "ENABLED",
+            service_type,
+            authorizer_config,
+            "CUSTOMER_MANAGED",
+        )
+        return self.domain_configurations[domain_configuration_name]
 
-iot_backends = {}
-for region in Session().get_available_regions("iot"):
-    iot_backends[region] = IoTBackend(region)
-for region in Session().get_available_regions("iot", partition_name="aws-us-gov"):
-    iot_backends[region] = IoTBackend(region)
-for region in Session().get_available_regions("iot", partition_name="aws-cn"):
-    iot_backends[region] = IoTBackend(region)
+    def delete_domain_configuration(self, domain_configuration_name):
+        if domain_configuration_name not in self.domain_configurations:
+            raise ResourceNotFoundException("The specified resource does not exist.")
+        del self.domain_configurations[domain_configuration_name]
+
+    def describe_domain_configuration(self, domain_configuration_name):
+        if domain_configuration_name not in self.domain_configurations:
+            raise ResourceNotFoundException("The specified resource does not exist.")
+        return self.domain_configurations[domain_configuration_name]
+
+    def list_domain_configurations(self):
+        return [_.to_dict() for _ in self.domain_configurations.values()]
+
+    def update_domain_configuration(
+        self,
+        domain_configuration_name,
+        authorizer_config,
+        domain_configuration_status,
+        remove_authorizer_config,
+    ):
+        if domain_configuration_name not in self.domain_configurations:
+            raise ResourceNotFoundException("The specified resource does not exist.")
+        domain_configuration = self.domain_configurations[domain_configuration_name]
+        if authorizer_config is not None:
+            domain_configuration.authorizer_config = authorizer_config
+        if domain_configuration_status is not None:
+            domain_configuration.domain_configuration_status = (
+                domain_configuration_status
+            )
+        if remove_authorizer_config is not None and remove_authorizer_config is True:
+            domain_configuration.authorizer_config = None
+        return domain_configuration
+
+    def search_index(self, query_string):
+        """
+        Pagination is not yet implemented. Only basic search queries are supported for now.
+        """
+        things = [
+            thing for thing in self.things.values() if thing.matches(query_string)
+        ]
+        groups = []
+        return [t.to_dict() for t in things], groups
+
+
+iot_backends = BackendDict(IoTBackend, "iot")

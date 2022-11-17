@@ -2,10 +2,10 @@ import json
 from datetime import datetime
 
 import boto3
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 
 from moto import mock_events, mock_sqs, mock_logs
-from moto.core import ACCOUNT_ID
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 from moto.core.utils import iso_8601_datetime_without_milliseconds
 
 
@@ -36,7 +36,7 @@ def test_send_to_cw_log_group():
     )
 
     # when
-    event_time = datetime(2021, 1, 1, 12, 23, 34)
+    event_time = datetime.utcnow()
     client_events.put_events(
         Entries=[
             {
@@ -45,26 +45,26 @@ def test_send_to_cw_log_group():
                 "DetailType": "type",
                 "Detail": json.dumps({"key": "value"}),
             }
-        ],
+        ]
     )
 
     # then
     response = client_logs.filter_log_events(logGroupName=log_group_name)
     response["events"].should.have.length_of(1)
     event = response["events"][0]
-    event["logStreamName"].should_not.be.empty
+    event["logStreamName"].should_not.equal(None)
     event["timestamp"].should.be.a(float)
     event["ingestionTime"].should.be.a(int)
-    event["eventId"].should_not.be.empty
+    event["eventId"].should_not.equal(None)
 
     message = json.loads(event["message"])
     message["version"].should.equal("0")
-    message["id"].should_not.be.empty
+    message["id"].should_not.equal(None)
     message["detail-type"].should.equal("type")
     message["source"].should.equal("source")
     message["time"].should.equal(iso_8601_datetime_without_milliseconds(event_time))
     message["region"].should.equal("eu-central-1")
-    message["resources"].should.be.empty
+    message["resources"].should.equal([])
     message["detail"].should.equal({"key": "value"})
 
 
@@ -121,7 +121,7 @@ def test_send_to_sqs_fifo_queue():
                 "DetailType": "type",
                 "Detail": json.dumps({"key": "value"}),
             }
-        ],
+        ]
     )
 
     # then
@@ -131,21 +131,21 @@ def test_send_to_sqs_fifo_queue():
     )
     response["Messages"].should.have.length_of(1)
     message = response["Messages"][0]
-    message["MessageId"].should_not.be.empty
-    message["ReceiptHandle"].should_not.be.empty
-    message["MD5OfBody"].should_not.be.empty
+    message["MessageId"].should_not.equal(None)
+    message["ReceiptHandle"].should_not.equal(None)
+    message["MD5OfBody"].should_not.equal(None)
 
-    message["Attributes"]["MessageDeduplicationId"].should_not.be.empty
+    message["Attributes"]["MessageDeduplicationId"].should_not.equal(None)
     message["Attributes"]["MessageGroupId"].should.equal("group-id")
 
     body = json.loads(message["Body"])
     body["version"].should.equal("0")
-    body["id"].should_not.be.empty
+    body["id"].should_not.equal(None)
     body["detail-type"].should.equal("type")
     body["source"].should.equal("source")
     body["time"].should.equal(iso_8601_datetime_without_milliseconds(event_time))
     body["region"].should.equal("eu-central-1")
-    body["resources"].should.be.empty
+    body["resources"].should.equal([])
     body["detail"].should.equal({"key": "value"})
 
     # A FIFO queue without content-based deduplication enabled
@@ -172,9 +172,7 @@ def test_send_to_sqs_queue():
         EventPattern=json.dumps({"account": [ACCOUNT_ID]}),
         State="ENABLED",
     )
-    client_events.put_targets(
-        Rule=rule_name, Targets=[{"Id": "sqs", "Arn": queue_arn}],
-    )
+    client_events.put_targets(Rule=rule_name, Targets=[{"Id": "sqs", "Arn": queue_arn}])
 
     # when
     event_time = datetime(2021, 1, 1, 12, 23, 34)
@@ -186,23 +184,137 @@ def test_send_to_sqs_queue():
                 "DetailType": "type",
                 "Detail": json.dumps({"key": "value"}),
             }
-        ],
+        ]
     )
 
     # then
     response = client_sqs.receive_message(QueueUrl=queue_url)
     response["Messages"].should.have.length_of(1)
     message = response["Messages"][0]
-    message["MessageId"].should_not.be.empty
-    message["ReceiptHandle"].should_not.be.empty
-    message["MD5OfBody"].should_not.be.empty
+    message["MessageId"].should_not.equal(None)
+    message["ReceiptHandle"].should_not.equal(None)
+    message["MD5OfBody"].should_not.equal(None)
 
     body = json.loads(message["Body"])
     body["version"].should.equal("0")
-    body["id"].should_not.be.empty
+    body["id"].should_not.equal(None)
     body["detail-type"].should.equal("type")
     body["source"].should.equal("source")
     body["time"].should.equal(iso_8601_datetime_without_milliseconds(event_time))
     body["region"].should.equal("eu-central-1")
-    body["resources"].should.be.empty
+    body["resources"].should.equal([])
     body["detail"].should.equal({"key": "value"})
+
+
+@mock_events
+@mock_sqs
+def test_send_to_sqs_queue_with_custom_event_bus():
+    # given
+    client_events = boto3.client("events", "eu-central-1")
+    client_sqs = boto3.client("sqs", region_name="eu-central-1")
+
+    event_bus_arn = client_events.create_event_bus(Name="mock")["EventBusArn"]
+    rule_name = "test-rule"
+    queue_url = client_sqs.create_queue(QueueName="test-queue")["QueueUrl"]
+    queue_arn = client_sqs.get_queue_attributes(
+        QueueUrl=queue_url, AttributeNames=["QueueArn"]
+    )["Attributes"]["QueueArn"]
+    client_events.put_rule(
+        Name=rule_name,
+        EventPattern=json.dumps({"account": [ACCOUNT_ID]}),
+        State="ENABLED",
+        EventBusName=event_bus_arn,
+    )
+    client_events.put_targets(
+        Rule=rule_name,
+        Targets=[{"Id": "sqs", "Arn": queue_arn}],
+        EventBusName=event_bus_arn,
+    )
+
+    # when
+    client_events.put_events(
+        Entries=[
+            {
+                "Source": "source",
+                "DetailType": "type",
+                "Detail": json.dumps({"key": "value"}),
+                "EventBusName": event_bus_arn,
+            }
+        ]
+    )
+
+    # then
+    response = client_sqs.receive_message(QueueUrl=queue_url)
+    assert len(response["Messages"]) == 1
+
+    body = json.loads(response["Messages"][0]["Body"])
+    body["detail"].should.equal({"key": "value"})
+
+
+@mock_events
+@mock_logs
+def test_moto_matches_none_value_with_exists_filter():
+    pattern = {
+        "source": ["test-source"],
+        "detail-type": ["test-detail-type"],
+        "detail": {
+            "foo": [{"exists": True}],
+            "bar": [{"exists": True}],
+        },
+    }
+    logs_client = boto3.client("logs", region_name="eu-west-1")
+    log_group_name = "test-log-group"
+    logs_client.create_log_group(logGroupName=log_group_name)
+
+    events_client = boto3.client("events", region_name="eu-west-1")
+    event_bus_name = "test-event-bus"
+    events_client.create_event_bus(Name=event_bus_name)
+
+    rule_name = "test-event-rule"
+    events_client.put_rule(
+        Name=rule_name,
+        State="ENABLED",
+        EventPattern=json.dumps(pattern),
+        EventBusName=event_bus_name,
+    )
+
+    events_client.put_targets(
+        Rule=rule_name,
+        EventBusName=event_bus_name,
+        Targets=[
+            {
+                "Id": "123",
+                "Arn": f"arn:aws:logs:eu-west-1:{ACCOUNT_ID}:log-group:{log_group_name}",
+            }
+        ],
+    )
+
+    events_client.put_events(
+        Entries=[
+            {
+                "EventBusName": event_bus_name,
+                "Source": "test-source",
+                "DetailType": "test-detail-type",
+                "Detail": json.dumps({"foo": "123", "bar": "123"}),
+            },
+            {
+                "EventBusName": event_bus_name,
+                "Source": "test-source",
+                "DetailType": "test-detail-type",
+                "Detail": json.dumps({"foo": None, "bar": "123"}),
+            },
+        ]
+    )
+
+    events = sorted(
+        logs_client.filter_log_events(logGroupName=log_group_name)["events"],
+        key=lambda x: x["eventId"],
+    )
+    event_details = [json.loads(x["message"])["detail"] for x in events]
+
+    event_details.should.equal(
+        [
+            {"foo": "123", "bar": "123"},
+            {"foo": None, "bar": "123"},
+        ],
+    )

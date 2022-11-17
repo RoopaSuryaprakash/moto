@@ -1,11 +1,8 @@
-from __future__ import unicode_literals
-
-from moto.compat import OrderedDict
-from moto.core.utils import get_random_hex
-from .base import BaseRDSBackend, BaseRDSModel
+from collections import OrderedDict
+from moto.moto_api._internal import mock_random
+from .base import BaseRDSModel
 from .tag import TaggableRDSResource
 from ..exceptions import DBSecurityGroupNotFound
-from ..models.base import ACCOUNT_ID
 from .. import utils
 
 
@@ -16,14 +13,14 @@ class DBSecurityGroup(TaggableRDSResource, BaseRDSModel):
     def __init__(
         self, backend, db_security_group_name, db_security_group_description, tags=None
     ):
-        super(DBSecurityGroup, self).__init__(backend)
+        super().__init__(backend)
         self.db_security_group_name = db_security_group_name
         self.db_security_group_description = db_security_group_description
         self._ip_ranges = []
         self._ec2_security_groups = []
         if tags:
             self.add_tags(tags)
-        self.owner_id = ACCOUNT_ID
+        self.owner_id = self.account_id
         self.vpc_id = None
 
     @property
@@ -64,9 +61,9 @@ class DBSecurityGroup(TaggableRDSResource, BaseRDSModel):
     ):
         properties = cloudformation_json["Properties"]
         if "DBSecurityGroupName" not in properties:
-            properties["DBSecurityGroupName"] = resource_name.lower() + get_random_hex(
-                12
-            )
+            properties[
+                "DBSecurityGroupName"
+            ] = resource_name.lower() + mock_random.get_random_hex(12)
         backend = cls.get_regional_backend(region_name)
         params = utils.parse_cf_properties("CreateDBSecurityGroup", properties)
         security_group = backend.create_db_security_group(**params)
@@ -87,9 +84,8 @@ class DBSecurityGroup(TaggableRDSResource, BaseRDSModel):
         self.backend.delete_security_group(self.group_name)
 
 
-class DBSecurityGroupBackend(BaseRDSBackend):
+class DBSecurityGroupBackend:
     def __init__(self):
-        super(DBSecurityGroupBackend, self).__init__()
         self.db_security_groups = OrderedDict()
 
     def get_db_security_group(self, db_security_group_name):
@@ -106,7 +102,7 @@ class DBSecurityGroupBackend(BaseRDSBackend):
         self.db_security_groups[db_security_group_name] = security_group
         return security_group
 
-    def describe_db_security_groups(self, db_security_group_name=None, **kwargs):
+    def describe_db_security_groups(self, db_security_group_name=None, **_):
         if db_security_group_name:
             return [self.get_db_security_group(db_security_group_name)]
         return self.db_security_groups.values()

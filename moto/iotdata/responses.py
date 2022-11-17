@@ -1,16 +1,16 @@
-from __future__ import unicode_literals
 from moto.core.responses import BaseResponse
 from .models import iotdata_backends
 import json
-from six.moves.urllib.parse import unquote
+from urllib.parse import unquote
 
 
 class IoTDataPlaneResponse(BaseResponse):
-    SERVICE_NAME = "iot-data"
+    def __init__(self):
+        super().__init__(service_name="iot-data")
 
     @property
     def iotdata_backend(self):
-        return iotdata_backends[self.region]
+        return iotdata_backends[self.current_account][self.region]
 
     def update_thing_shadow(self):
         thing_name = self._get_param("thingName")
@@ -42,8 +42,6 @@ class IoTDataPlaneResponse(BaseResponse):
         return self.call_action()
 
     def publish(self):
-        topic = self._get_param("topic")
-        qos = self._get_int_param("qos")
-        payload = self._get_param("payload")
-        self.iotdata_backend.publish(topic=topic, qos=qos, payload=payload)
+        topic = self._get_param("target")
+        self.iotdata_backend.publish(topic=topic, payload=self.body)
         return json.dumps(dict())

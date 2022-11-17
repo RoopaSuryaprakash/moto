@@ -1,10 +1,7 @@
-from __future__ import unicode_literals
-from moto.core import BaseBackend, BaseModel
+from moto.core import BaseBackend, BackendDict, BaseModel
 from moto.ec2 import ec2_backends
-from moto.core import ACCOUNT_ID
-import uuid
+from moto.moto_api._internal import mock_random as random
 import datetime
-from random import choice
 
 from .exceptions import ResourceNotFoundException, ValidationException
 
@@ -84,7 +81,7 @@ class OpsworkInstance(BaseModel):
         self.infrastructure_class = "ec2 (fixed)"
         self.platform = "linux (fixed)"
 
-        self.id = "{0}".format(uuid.uuid4())
+        self.id = "{0}".format(random.uuid4())
         self.created_at = datetime.datetime.utcnow()
 
     def start(self):
@@ -101,6 +98,7 @@ class OpsworkInstance(BaseModel):
                 security_group_names=[],
                 security_group_ids=self.security_group_ids,
                 instance_type=self.instance_type,
+                is_instance_type_default=not self.instance_type,
                 key_name=self.ssh_keyname,
                 ebs_optimized=self.ebs_optimized,
                 subnet_id=self.subnet_id,
@@ -185,7 +183,7 @@ class Layer(BaseModel):
     def __init__(
         self,
         stack_id,
-        type,
+        layer_type,
         name,
         shortname,
         attributes=None,
@@ -203,7 +201,7 @@ class Layer(BaseModel):
         lifecycle_event_configuration=None,
     ):
         self.stack_id = stack_id
-        self.type = type
+        self.type = layer_type
         self.name = name
         self.shortname = shortname
 
@@ -273,7 +271,7 @@ class Layer(BaseModel):
         self.install_updates_on_boot = install_updates_on_boot
         self.use_ebs_optimized_instances = use_ebs_optimized_instances
 
-        self.id = "{0}".format(uuid.uuid4())
+        self.id = "{0}".format(random.uuid4())
         self.created_at = datetime.datetime.utcnow()
 
     def __eq__(self, other):
@@ -315,6 +313,7 @@ class Stack(BaseModel):
     def __init__(
         self,
         name,
+        account_id,
         region,
         service_role_arn,
         default_instance_profile_arn,
@@ -368,10 +367,10 @@ class Stack(BaseModel):
         self.default_root_device_type = default_root_device_type
         self.agent_version = agent_version
 
-        self.id = "{0}".format(uuid.uuid4())
+        self.id = "{0}".format(random.uuid4())
         self.layers = []
         self.apps = []
-        self.account_number = ACCOUNT_ID
+        self.account_number = account_id
         self.created_at = datetime.datetime.utcnow()
 
     def __eq__(self, other):
@@ -380,7 +379,8 @@ class Stack(BaseModel):
     def generate_hostname(self):
         # this doesn't match amazon's implementation
         return "{theme}-{rand}-(moto)".format(
-            theme=self.hostname_theme, rand=[choice("abcdefghijhk") for _ in range(4)]
+            theme=self.hostname_theme,
+            rand=[random.choice("abcdefghijhk") for _ in range(4)],
         )
 
     @property
@@ -425,7 +425,7 @@ class App(BaseModel):
         self,
         stack_id,
         name,
-        type,
+        app_type,
         shortname=None,
         description=None,
         datasources=None,
@@ -438,7 +438,7 @@ class App(BaseModel):
     ):
         self.stack_id = stack_id
         self.name = name
-        self.type = type
+        self.type = app_type
         self.shortname = shortname
         self.description = description
 
@@ -468,7 +468,7 @@ class App(BaseModel):
         if environment is None:
             self.environment = {}
 
-        self.id = "{0}".format(uuid.uuid4())
+        self.id = "{0}".format(random.uuid4())
         self.created_at = datetime.datetime.utcnow()
 
     def __eq__(self, other):
@@ -495,20 +495,16 @@ class App(BaseModel):
 
 
 class OpsWorksBackend(BaseBackend):
-    def __init__(self, ec2_backend):
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         self.stacks = {}
         self.layers = {}
         self.apps = {}
         self.instances = {}
-        self.ec2_backend = ec2_backend
-
-    def reset(self):
-        ec2_backend = self.ec2_backend
-        self.__dict__ = {}
-        self.__init__(ec2_backend)
+        self.ec2_backend = ec2_backends[account_id][region_name]
 
     def create_stack(self, **kwargs):
-        stack = Stack(**kwargs)
+        stack = Stack(account_id=self.account_id, **kwargs)
         self.stacks[stack.id] = stack
         return stack
 
@@ -672,6 +668,4 @@ class OpsWorksBackend(BaseBackend):
         self.instances[instance_id].start()
 
 
-opsworks_backends = {}
-for region, ec2_backend in ec2_backends.items():
-    opsworks_backends[region] = OpsWorksBackend(ec2_backend)
+opsworks_backends = BackendDict(OpsWorksBackend, "ec2")

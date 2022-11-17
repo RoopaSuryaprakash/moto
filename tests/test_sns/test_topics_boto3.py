@@ -1,14 +1,12 @@
-from __future__ import unicode_literals
 import boto3
-import six
 import json
 
-# import sure  # noqa
+# import sure  # noqa # pylint: disable=unused-import
 
 from botocore.exceptions import ClientError
 from moto import mock_sns
 from moto.sns.models import DEFAULT_EFFECTIVE_DELIVERY_POLICY, DEFAULT_PAGE_SIZE
-from moto.core import ACCOUNT_ID
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 
 
 @mock_sns
@@ -202,18 +200,9 @@ def test_topic_attributes():
     # boto can't handle prefix-mandatory strings:
     # i.e. unicode on Python 2 -- u"foobar"
     # and bytes on Python 3 -- b"foobar"
-    if six.PY2:
-        policy = json.dumps({b"foo": b"bar"})
-        displayname = b"My display name"
-        delivery = json.dumps(
-            {b"http": {b"defaultHealthyRetryPolicy": {b"numRetries": 5}}}
-        )
-    else:
-        policy = json.dumps({"foo": "bar"})
-        displayname = "My display name"
-        delivery = json.dumps(
-            {"http": {"defaultHealthyRetryPolicy": {"numRetries": 5}}}
-        )
+    policy = json.dumps({"foo": "bar"})
+    displayname = "My display name"
+    delivery = json.dumps({"http": {"defaultHealthyRetryPolicy": {"numRetries": 5}}})
     conn.set_topic_attributes(
         TopicArn=topic_arn, AttributeName="Policy", AttributeValue=policy
     )
@@ -225,7 +214,7 @@ def test_topic_attributes():
     )
 
     attributes = conn.get_topic_attributes(TopicArn=topic_arn)["Attributes"]
-    attributes["Policy"].should.equal('{"foo": "bar"}')
+    attributes["Policy"].should.equal('{"foo":"bar"}')
     attributes["DisplayName"].should.equal("My display name")
     attributes["DeliveryPolicy"].should.equal(
         '{"http": {"defaultHealthyRetryPolicy": {"numRetries": 5}}}'
@@ -562,7 +551,7 @@ def test_create_fifo_topic():
 @mock_sns
 def test_topic_kms_master_key_id_attribute():
     client = boto3.client("sns", region_name="us-west-2")
-    resp = client.create_topic(Name="test-sns-no-key-attr",)
+    resp = client.create_topic(Name="test-sns-no-key-attr")
     topic_arn = resp["TopicArn"]
     resp = client.get_topic_attributes(TopicArn=topic_arn)
     resp["Attributes"].should_not.have.key("KmsMasterKeyId")
@@ -575,9 +564,57 @@ def test_topic_kms_master_key_id_attribute():
     resp["Attributes"]["KmsMasterKeyId"].should.equal("test-key")
 
     resp = client.create_topic(
-        Name="test-sns-with-key-attr", Attributes={"KmsMasterKeyId": "key-id",},
+        Name="test-sns-with-key-attr", Attributes={"KmsMasterKeyId": "key-id"}
     )
     topic_arn = resp["TopicArn"]
     resp = client.get_topic_attributes(TopicArn=topic_arn)
     resp["Attributes"].should.have.key("KmsMasterKeyId")
     resp["Attributes"]["KmsMasterKeyId"].should.equal("key-id")
+
+
+@mock_sns
+def test_topic_fifo_get_attributes():
+    client = boto3.client("sns", region_name="us-east-1")
+    resp = client.create_topic(
+        Name="test-topic-fifo-get-attr.fifo", Attributes={"FifoTopic": "true"}
+    )
+    topic_arn = resp["TopicArn"]
+    attributes = client.get_topic_attributes(TopicArn=topic_arn)["Attributes"]
+
+    attributes.should.have.key("FifoTopic")
+    attributes.should.have.key("ContentBasedDeduplication")
+
+    attributes["FifoTopic"].should.equal("true")
+    attributes["ContentBasedDeduplication"].should.equal("false")
+
+    client.set_topic_attributes(
+        TopicArn=topic_arn,
+        AttributeName="ContentBasedDeduplication",
+        AttributeValue="true",
+    )
+    attributes = client.get_topic_attributes(TopicArn=topic_arn)["Attributes"]
+    attributes["ContentBasedDeduplication"].should.equal("true")
+
+
+@mock_sns
+def test_topic_get_attributes():
+    client = boto3.client("sns", region_name="us-east-1")
+    resp = client.create_topic(Name="test-topic-get-attr")
+    topic_arn = resp["TopicArn"]
+    attributes = client.get_topic_attributes(TopicArn=topic_arn)["Attributes"]
+
+    attributes.should_not.have.key("FifoTopic")
+    attributes.should_not.have.key("ContentBasedDeduplication")
+
+
+@mock_sns
+def test_topic_get_attributes_with_fifo_false():
+    client = boto3.client("sns", region_name="us-east-1")
+    resp = client.create_topic(
+        Name="test-topic-get-attr-with-fifo-false", Attributes={"FifoTopic": "false"}
+    )
+    topic_arn = resp["TopicArn"]
+    attributes = client.get_topic_attributes(TopicArn=topic_arn)["Attributes"]
+
+    attributes.should_not.have.key("FifoTopic")
+    attributes.should_not.have.key("ContentBasedDeduplication")

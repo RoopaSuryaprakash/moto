@@ -1,10 +1,9 @@
-from __future__ import unicode_literals
-
+# pylint: disable=unused-import
 import boto3
 from botocore.exceptions import ClientError
 
 from . import mock_rds
-from sure import this
+import sure  # noqa: F401
 
 
 @mock_rds

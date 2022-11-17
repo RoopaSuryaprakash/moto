@@ -1,19 +1,17 @@
-from __future__ import unicode_literals
-
 import boto3
 import pytest
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 from moto import mock_support
 
 
 @mock_support
 def test_describe_trusted_advisor_checks_returns_amount_of_checks():
     """
-    test that the 104 checks that are listed under trusted advisor currently 
+    test that the 104 checks that are listed under trusted advisor currently
     are returned
     """
     client = boto3.client("support", "us-east-1")
-    response = client.describe_trusted_advisor_checks(language="en",)
+    response = client.describe_trusted_advisor_checks(language="en")
 
     response["checks"].should.be.length_of(104)
 
@@ -24,7 +22,7 @@ def test_describe_trusted_advisor_checks_returns_an_expected_id():
     test that a random check id is returned
     """
     client = boto3.client("support", "us-east-1")
-    response = client.describe_trusted_advisor_checks(language="en",)
+    response = client.describe_trusted_advisor_checks(language="en")
     check_ids = []
     for check in response["checks"]:
         check_ids.append(check["id"])
@@ -38,7 +36,7 @@ def test_describe_trusted_advisor_checks_returns_an_expected_check_name():
     test that a random check name is returned
     """
     client = boto3.client("support", "us-east-1")
-    response = client.describe_trusted_advisor_checks(language="en",)
+    response = client.describe_trusted_advisor_checks(language="en")
     check_names = []
     for check in response["checks"]:
         check_names.append(check["name"])
@@ -49,7 +47,7 @@ def test_describe_trusted_advisor_checks_returns_an_expected_check_name():
 @mock_support
 def test_refresh_trusted_advisor_check_returns_expected_check():
     """
-    A refresh of a trusted advisor check returns the check id 
+    A refresh of a trusted advisor check returns the check id
     in the response
     """
     client = boto3.client("support", "us-east-1")
@@ -89,7 +87,7 @@ def test_refresh_trusted_advisor_check_cycles_to_new_status_on_each_call(
     check_name = "XXXIIIY"
     actual_statuses = []
 
-    for status in possible_statuses:
+    for _ in possible_statuses:
         response = client.refresh_trusted_advisor_check(checkId=check_name)
         actual_statuses.append(response["status"]["status"])
 
@@ -114,11 +112,11 @@ def test_refresh_trusted_advisor_check_cycles_to_new_status_on_with_two_checks()
         "abandoned",
     ]
 
-    for check in possible_statuses:
+    for _ in possible_statuses:
         response = client.refresh_trusted_advisor_check(checkId=check_1_name)
         check_1_statuses.append(response["status"]["status"])
 
-    for check in possible_statuses:
+    for _ in possible_statuses:
         response = client.refresh_trusted_advisor_check(checkId=check_2_name)
         check_2_statuses.append(response["status"]["status"])
 
@@ -143,7 +141,7 @@ def test_refresh_trusted_advisor_check_cycle_continues_on_full_cycle():
         "abandoned",
     ]
 
-    for status in possible_statuses:
+    for _ in possible_statuses:
         client.refresh_trusted_advisor_check(checkId=check_name)
 
     expected_none_response = client.refresh_trusted_advisor_check(checkId=check_name)
@@ -163,7 +161,7 @@ def test_support_case_is_closed():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -201,7 +199,7 @@ def test_support_case_created():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -213,11 +211,11 @@ def test_support_case_created():
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("subject", "test_subject",),
-        ("serviceCode", "test_service_code",),
-        ("severityCode", "normal",),
-        ("categoryCode", "test_category_code",),
-        ("language", "test_language",),
+        ("subject", "test_subject"),
+        ("serviceCode", "test_service_code"),
+        ("severityCode", "normal"),
+        ("categoryCode", "test_category_code"),
+        ("language", "test_language"),
     ],
 )
 @mock_support
@@ -233,7 +231,7 @@ def test_support_created_case_can_be_described(key, value):
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -260,11 +258,11 @@ def test_support_created_case_can_be_described(key, value):
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("subject", "test_subject",),
-        ("serviceCode", "test_service_code",),
-        ("severityCode", "normal",),
-        ("categoryCode", "test_category_code",),
-        ("language", "test_language",),
+        ("subject", "test_subject"),
+        ("serviceCode", "test_service_code"),
+        ("severityCode", "normal"),
+        ("categoryCode", "test_category_code"),
+        ("language", "test_language"),
     ],
 )
 @mock_support
@@ -280,7 +278,7 @@ def test_support_created_case_can_be_described_without_next_token(key, value):
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -306,11 +304,11 @@ def test_support_created_case_can_be_described_without_next_token(key, value):
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("subject", "test_subject",),
-        ("serviceCode", "test_service_code",),
-        ("severityCode", "normal",),
-        ("categoryCode", "test_category_code",),
-        ("language", "test_language",),
+        ("subject", "test_subject"),
+        ("serviceCode", "test_service_code"),
+        ("severityCode", "normal"),
+        ("categoryCode", "test_category_code"),
+        ("language", "test_language"),
     ],
 )
 @mock_support
@@ -326,7 +324,7 @@ def test_support_created_case_can_be_described_without_max_results(key, value):
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -352,11 +350,11 @@ def test_support_created_case_can_be_described_without_max_results(key, value):
 @pytest.mark.parametrize(
     "key,value",
     [
-        ("subject", "test_subject",),
-        ("serviceCode", "test_service_code",),
-        ("severityCode", "normal",),
-        ("categoryCode", "test_category_code",),
-        ("language", "test_language",),
+        ("subject", "test_subject"),
+        ("serviceCode", "test_service_code"),
+        ("severityCode", "normal"),
+        ("categoryCode", "test_category_code"),
+        ("language", "test_language"),
     ],
 )
 @mock_support
@@ -374,7 +372,7 @@ def test_support_created_case_can_be_described_without_max_results_or_next_token
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -413,7 +411,7 @@ def test_support_created_case_can_be_described_without_params():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -437,7 +435,7 @@ def test_support_created_case_cc_email_correct():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -475,7 +473,7 @@ def test_support_case_include_resolved_defaults_to_false():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -513,7 +511,7 @@ def test_support_case_include_communications_defaults_to_true():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -549,7 +547,7 @@ def test_multiple_support_created_cases_can_be_described():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -561,7 +559,7 @@ def test_multiple_support_created_cases_can_be_described():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -601,7 +599,7 @@ def test_support_created_case_can_be_described_and_contains_communications_when_
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -627,7 +625,7 @@ def test_support_created_case_can_be_described_and_contains_communications_when_
 @mock_support
 def test_support_created_case_can_be_described_and_does_not_contain_communications_when_false():
     """
-    On creating a support request it does not include 
+    On creating a support request it does not include
     comms when  includeCommunications=False
     """
 
@@ -638,7 +636,7 @@ def test_support_created_case_can_be_described_and_does_not_contain_communicatio
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -665,7 +663,7 @@ def test_support_created_case_can_be_described_and_does_not_contain_communicatio
 @mock_support
 def test_support_created_case_can_be_described_and_contains_resolved_cases_when_true():
     """
-    On creating a support request it does contain resolved cases when 
+    On creating a support request it does contain resolved cases when
     includeResolvedCases=true
     """
 
@@ -676,7 +674,7 @@ def test_support_created_case_can_be_described_and_contains_resolved_cases_when_
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -705,7 +703,7 @@ def test_support_created_case_can_be_described_and_contains_resolved_cases_when_
 @mock_support
 def test_support_created_case_can_be_described_and_does_not_contain_resolved_cases_when_false():
     """
-    On creating a support request it does not contain resolved cases when 
+    On creating a support request it does not contain resolved cases when
     includeResolvedCases=false
     """
 
@@ -716,7 +714,7 @@ def test_support_created_case_can_be_described_and_does_not_contain_resolved_cas
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",
@@ -754,7 +752,7 @@ def test_support_created_case_can_be_described_and_can_cycle_case_severities():
         severityCode="low",
         categoryCode="test_category_code",
         communicationBody="test_communication_body",
-        ccEmailAddresses=["test_email_cc",],
+        ccEmailAddresses=["test_email_cc"],
         language="test_language",
         issueType="test_issue_type",
         attachmentSetId="test_attachment_set_id",

@@ -1,4 +1,3 @@
-from __future__ import unicode_literals
 import json
 import re
 from collections import defaultdict
@@ -16,9 +15,12 @@ class SNSResponse(BaseResponse):
     )
     OPT_OUT_PHONE_NUMBER_REGEX = re.compile(r"^\+?\d+$")
 
+    def __init__(self):
+        super().__init__(service_name="sns")
+
     @property
     def backend(self):
-        return sns_backends[self.region]
+        return sns_backends[self.current_account][self.region]
 
     def _error(self, code, message, sender="Sender"):
         template = self.response_template(ERROR_RESPONSE)
@@ -32,10 +34,13 @@ class SNSResponse(BaseResponse):
         tags = self._get_list_prefix("Tags.member")
         return {tag["key"]: tag["value"] for tag in tags}
 
-    def _parse_message_attributes(self, prefix="", value_namespace="Value."):
+    def _parse_message_attributes(self):
         message_attributes = self._get_object_map(
             "MessageAttributes.entry", name="Name", value="Value"
         )
+        return self._transform_message_attributes(message_attributes)
+
+    def _transform_message_attributes(self, message_attributes):
         # SNS converts some key names before forwarding messages
         # DataType -> Type, StringValue -> Value, BinaryValue -> Value
         transformed_message_attributes = {}
@@ -64,15 +69,18 @@ class SNSResponse(BaseResponse):
             if "StringValue" in value:
                 if data_type == "Number":
                     try:
-                        transform_value = float(value["StringValue"])
+                        transform_value = int(value["StringValue"])
                     except ValueError:
-                        raise InvalidParameterValue(
-                            "An error occurred (ParameterValueInvalid) "
-                            "when calling the Publish operation: "
-                            "Could not cast message attribute '{0}' value to number.".format(
-                                name
+                        try:
+                            transform_value = float(value["StringValue"])
+                        except ValueError:
+                            raise InvalidParameterValue(
+                                "An error occurred (ParameterValueInvalid) "
+                                "when calling the Publish operation: "
+                                "Could not cast message attribute '{0}' value to number.".format(
+                                    name
+                                )
                             )
-                        )
                 else:
                     transform_value = value["StringValue"]
             elif "BinaryValue" in value:
@@ -171,6 +179,11 @@ class SNSResponse(BaseResponse):
             }
             if topic.kms_master_key_id:
                 attributes["KmsMasterKeyId"] = topic.kms_master_key_id
+            if topic.fifo_topic == "true":
+                attributes["FifoTopic"] = topic.fifo_topic
+                attributes[
+                    "ContentBasedDeduplication"
+                ] = topic.content_based_deduplication
             response = {
                 "GetTopicAttributesResponse": {
                     "GetTopicAttributesResult": {"Attributes": attributes},
@@ -324,6 +337,7 @@ class SNSResponse(BaseResponse):
         topic_arn = self._get_param("TopicArn")
         phone_number = self._get_param("PhoneNumber")
         subject = self._get_param("Subject")
+        message_group_id = self._get_param("MessageGroupId")
 
         message_attributes = self._parse_message_attributes()
 
@@ -351,6 +365,7 @@ class SNSResponse(BaseResponse):
                 phone_number=phone_number,
                 subject=subject,
                 message_attributes=message_attributes,
+                group_id=message_group_id,
             )
         except ValueError as err:
             error_response = self._error("InvalidParameter", str(err))
@@ -371,12 +386,34 @@ class SNSResponse(BaseResponse):
         template = self.response_template(PUBLISH_TEMPLATE)
         return template.render(message_id=message_id)
 
+    def publish_batch(self):
+        topic_arn = self._get_param("TopicArn")
+        publish_batch_request_entries = self._get_multi_param(
+            "PublishBatchRequestEntries.member"
+        )
+        for entry in publish_batch_request_entries:
+            if "MessageAttributes" in entry:
+                # Convert into the same format as the regular publish-method
+                # FROM: [{'Name': 'a', 'Value': {'DataType': 'String', 'StringValue': 'v'}}]
+                # TO  : {'name': {'DataType': 'Number', 'StringValue': '123'}}
+                msg_attrs = {y["Name"]: y["Value"] for y in entry["MessageAttributes"]}
+                # Use the same validation/processing as the regular publish-method
+                entry["MessageAttributes"] = self._transform_message_attributes(
+                    msg_attrs
+                )
+        successful, failed = self.backend.publish_batch(
+            topic_arn=topic_arn,
+            publish_batch_request_entries=publish_batch_request_entries,
+        )
+        template = self.response_template(PUBLISH_BATCH_TEMPLATE)
+        return template.render(successful=successful, failed=failed)
+
     def create_platform_application(self):
         name = self._get_param("Name")
         platform = self._get_param("Platform")
         attributes = self._get_attributes()
         platform_application = self.backend.create_platform_application(
-            self.region, name, platform, attributes
+            name, platform, attributes
         )
 
         if self.request_json:
@@ -491,7 +528,7 @@ class SNSResponse(BaseResponse):
         attributes = self._get_attributes()
 
         platform_endpoint = self.backend.create_platform_endpoint(
-            self.region, application, custom_user_data, token, attributes
+            application, custom_user_data, token, attributes
         )
 
         if self.request_json:
@@ -837,6 +874,16 @@ GET_TOPIC_ATTRIBUTES_TEMPLATE = """<GetTopicAttributesResponse xmlns="http://sns
         <value>{{ topic.kms_master_key_id }}</value>
       </entry>
       {% endif %}
+      {% if topic.fifo_topic == 'true' %}
+      <entry>
+        <key>FifoTopic</key>
+        <value>{{ topic.fifo_topic }}</value>
+      </entry>
+      <entry>
+        <key>ContentBasedDeduplication</key>
+        <value>{{ topic.content_based_deduplication }}</value>
+      </entry>
+      {% endif %}
     </Attributes>
   </GetTopicAttributesResult>
   <ResponseMetadata>
@@ -1075,10 +1122,12 @@ GET_SMS_ATTRIBUTES_TEMPLATE = """<GetSMSAttributesResponse xmlns="http://sns.ama
   <GetSMSAttributesResult>
     <attributes>
       {% for name, value in attributes.items() %}
+      {% if value %}
       <entry>
         <key>{{ name }}</key>
         <value>{{ value }}</value>
       </entry>
+      {% endif %}
       {% endfor %}
     </attributes>
   </GetSMSAttributesResult>
@@ -1175,3 +1224,29 @@ UNTAG_RESOURCE_TEMPLATE = """<UntagResourceResponse xmlns="http://sns.amazonaws.
         <RequestId>14eb7b1a-4cbd-5a56-80db-2d06412df769</RequestId>
     </ResponseMetadata>
 </UntagResourceResponse>"""
+
+PUBLISH_BATCH_TEMPLATE = """<PublishBatchResponse xmlns="http://sns.amazonaws.com/doc/2010-03-31/">
+  <ResponseMetadata>
+    <RequestId>1549581b-12b7-11e3-895e-1334aEXAMPLE</RequestId>
+  </ResponseMetadata>
+  <PublishBatchResult>
+    <Successful>
+{% for successful in successful %}
+      <member>
+        <Id>{{ successful["Id"] }}</Id>
+        <MessageId>{{ successful["MessageId"] }}</MessageId>
+      </member>
+{% endfor %}
+    </Successful>
+    <Failed>
+{% for failed in failed %}
+      <member>
+        <Id>{{ failed["Id"] }}</Id>
+        <Code>{{ failed["Code"] }}</Code>
+        <Message>{{ failed["Message"] }}</Message>
+        <SenderFault>{{'true' if failed["SenderFault"] else 'false'}}</SenderFault>
+      </member>
+{% endfor %}
+    </Failed>
+  </PublishBatchResult>
+</PublishBatchResponse>"""

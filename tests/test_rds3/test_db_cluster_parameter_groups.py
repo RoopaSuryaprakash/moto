@@ -1,18 +1,23 @@
-from __future__ import unicode_literals
-
 # noinspection PyPackageRequirements
+# pylint: disable=unused-import
 import boto3
 from botocore.exceptions import ClientError
 
 from . import mock_rds
 
-# import sure  # noqa
-from sure import this
+import sure  # noqa
+from sure import this  # noqa: F401
 
 
 test_tags = [
-    {"Key": "foo", "Value": "bar",},
-    {"Key": "foo1", "Value": "bar1",},
+    {
+        "Key": "foo",
+        "Value": "bar",
+    },
+    {
+        "Key": "foo1",
+        "Value": "bar1",
+    },
 ]
 
 

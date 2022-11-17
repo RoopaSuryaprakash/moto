@@ -1,10 +1,8 @@
-from __future__ import unicode_literals
-
 from collections import defaultdict
 from re import compile as re_compile
 
 from moto.rds3.exceptions import InvalidParameterValue
-from .base import BaseRDSBackend, BaseRDSModel
+from .base import BaseRDSModel
 
 
 class TaggableRDSResource(BaseRDSModel):
@@ -43,9 +41,8 @@ def shape_tags(tags):
     return shaped_tags
 
 
-class TagBackend(BaseRDSBackend):
+class TagBackend:
     def __init__(self):
-        super(TagBackend, self).__init__()
         self.tags = defaultdict(dict)
         self.arn_match = re_compile(
             r"^arn:aws:rds:.*:[0-9]*:(db|cluster|es|og|pg|cluster-pg|ri|secgrp|snapshot|cluster-snapshot|subgrp):.*$"

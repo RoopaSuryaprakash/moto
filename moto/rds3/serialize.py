@@ -1,3 +1,4 @@
+# pylint: disable=unused-argument
 """Protocol output serializers.
 
 This module contains classes that implement output serialization
@@ -38,7 +39,7 @@ from botocore.utils import parse_to_aware_datetime
 from botocore.utils import percent_encode
 from botocore.utils import is_json_value_header
 from botocore import xform_name
-from moto.core.utils import get_random_message_id
+from moto.ses.utils import get_random_message_id
 
 # From the spec, the default timestamp format if not specified is iso8601.
 DEFAULT_TIMESTAMP_FORMAT = "iso8601"
@@ -761,8 +762,8 @@ class DictSerializer(Serializer):
 
 
 class XmlSerializer(DictSerializer):
-    def serialize_to_response(self, value, operation_model):
-
+    def serialize_to_response(self, result_dict, operation_model):
+        value = result_dict
         if "error" in value:
             serialized = self._serialize_exception(value["error"], operation_model)
         else:

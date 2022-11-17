@@ -1,14 +1,12 @@
 -e .[all,server]
 -r requirements-tests.txt
 
-black==19.10b0; python_version >= '3.6'
-regex==2019.11.1; python_version >= '3.6'   # Needed for black
-coverage==4.5.4
-flake8==3.7.8
-boto>=2.45.0
-prompt-toolkit==2.0.10 # 3.x is not available with python2
+black==22.3.0
+flake8==4.0.1
+flake8-print
 click
-inflection==0.3.1
+inflection
 lxml
+mypy
 packaging
-
+prompt_toolkit

@@ -1,9 +1,5 @@
-from __future__ import unicode_literals
-
 import datetime
 import time
-
-from .base import BaseRDSBackend
 
 
 class LogFileManager(object):
@@ -32,9 +28,8 @@ class DBLogFile(object):
         return "{}-{}-{}".format(self.log_file_name, self.last_written, self.size)
 
 
-class LogBackend(BaseRDSBackend):
+class LogBackend:
     def __init__(self):
-        super(LogBackend, self).__init__()
         self.events = []
 
     def describe_db_log_files(self, db_instance_identifier):

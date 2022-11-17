@@ -1,22 +1,22 @@
-from __future__ import unicode_literals
 from moto.core.responses import BaseResponse
 from .models import mediapackage_backends
 import json
 
 
 class MediaPackageResponse(BaseResponse):
-    SERVICE_NAME = "mediapackage"
+    def __init__(self):
+        super().__init__(service_name="mediapackage")
 
     @property
     def mediapackage_backend(self):
-        return mediapackage_backends[self.region]
+        return mediapackage_backends[self.current_account][self.region]
 
     def create_channel(self):
         description = self._get_param("description")
-        id = self._get_param("id")
+        channel_id = self._get_param("id")
         tags = self._get_param("tags")
         channel = self.mediapackage_backend.create_channel(
-            description=description, id=id, tags=tags,
+            description=description, channel_id=channel_id, tags=tags
         )
         return json.dumps(channel.to_dict())
 
@@ -25,12 +25,16 @@ class MediaPackageResponse(BaseResponse):
         return json.dumps(dict(channels=channels))
 
     def describe_channel(self):
-        id = self._get_param("id")
-        return json.dumps(self.mediapackage_backend.describe_channel(id=id))
+        channel_id = self._get_param("id")
+        return json.dumps(
+            self.mediapackage_backend.describe_channel(channel_id=channel_id)
+        )
 
     def delete_channel(self):
         channel_id = self._get_param("id")
-        return json.dumps(self.mediapackage_backend.delete_channel(id=channel_id))
+        return json.dumps(
+            self.mediapackage_backend.delete_channel(channel_id=channel_id)
+        )
 
     def create_origin_endpoint(self):
         authorization = self._get_param("authorization")
@@ -39,7 +43,7 @@ class MediaPackageResponse(BaseResponse):
         dash_package = self._get_param("dashPackage")
         description = self._get_param("description")
         hls_package = self._get_param("hlsPackage")
-        id = self._get_param("id")
+        endpoint_id = self._get_param("id")
         manifest_name = self._get_param("manifestName")
         mss_package = self._get_param("mssPackage")
         origination = self._get_param("origination")
@@ -54,7 +58,7 @@ class MediaPackageResponse(BaseResponse):
             dash_package=dash_package,
             description=description,
             hls_package=hls_package,
-            id=id,
+            endpoint_id=endpoint_id,
             manifest_name=manifest_name,
             mss_package=mss_package,
             origination=origination,
@@ -70,12 +74,16 @@ class MediaPackageResponse(BaseResponse):
         return json.dumps(dict(originEndpoints=origin_endpoints))
 
     def describe_origin_endpoint(self):
-        id = self._get_param("id")
-        return json.dumps(self.mediapackage_backend.describe_origin_endpoint(id=id))
+        endpoint_id = self._get_param("id")
+        return json.dumps(
+            self.mediapackage_backend.describe_origin_endpoint(endpoint_id=endpoint_id)
+        )
 
     def delete_origin_endpoint(self):
-        id = self._get_param("id")
-        return json.dumps(self.mediapackage_backend.delete_origin_endpoint(id=id))
+        endpoint_id = self._get_param("id")
+        return json.dumps(
+            self.mediapackage_backend.delete_origin_endpoint(endpoint_id=endpoint_id)
+        )
 
     def update_origin_endpoint(self):
         authorization = self._get_param("authorization")
@@ -83,7 +91,7 @@ class MediaPackageResponse(BaseResponse):
         dash_package = self._get_param("dashPackage")
         description = self._get_param("description")
         hls_package = self._get_param("hlsPackage")
-        id = self._get_param("id")
+        endpoint_id = self._get_param("id")
         manifest_name = self._get_param("manifestName")
         mss_package = self._get_param("mssPackage")
         origination = self._get_param("origination")
@@ -96,7 +104,7 @@ class MediaPackageResponse(BaseResponse):
             dash_package=dash_package,
             description=description,
             hls_package=hls_package,
-            id=id,
+            endpoint_id=endpoint_id,
             manifest_name=manifest_name,
             mss_package=mss_package,
             origination=origination,

@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import boto3
 from sure import this
 
@@ -18,8 +16,8 @@ def test_describe_db_log_files():
         MasterUsername="root",
         MasterUserPassword="password",
     )
-    logs = client.describe_db_log_files(DBInstanceIdentifier="test-instance",).get(
-        "DescribeDBLogFiles"
-    )
+    logs = client.describe_db_log_files(
+        DBInstanceIdentifier="test-instance",
+    ).get("DescribeDBLogFiles")
     this(len(logs)).should.be.greater_than(0)
     logs[0]["LogFileName"].should.match("error/postgresql.log")

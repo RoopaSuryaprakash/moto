@@ -1,12 +1,10 @@
-from __future__ import unicode_literals
-
 import datetime
 import random
 from re import compile as re_compile
 
 from moto.cloudformation.exceptions import UnformattedGetAttTemplateException
-from moto.compat import OrderedDict
-from moto.core.utils import get_random_hex
+from collections import OrderedDict
+from moto.moto_api._internal import mock_random
 from ..exceptions import (
     DBInstanceAlreadyExists,
     DBInstanceNotFound,
@@ -16,7 +14,7 @@ from ..exceptions import (
     InvalidParameterValue,
     InvalidParameterCombination,
 )
-from .base import BaseRDSBackend, BaseRDSModel
+from .base import BaseRDSModel
 from .event import EventMixin
 from .log import LogFileManager
 from .tag import TaggableRDSResource
@@ -65,7 +63,7 @@ class DBInstance(TaggableRDSResource, EventMixin, BaseRDSModel):
         vpc_security_group_ids=None,
         **kwargs
     ):
-        super(DBInstance, self).__init__(backend)
+        super().__init__(backend)
 
         self.db_instance_identifier = identifier
         self.status = "available"
@@ -232,7 +230,7 @@ class DBInstance(TaggableRDSResource, EventMixin, BaseRDSModel):
     @property
     def address(self):
         return "{0}.aaaaaaaaaa.{1}.rds.amazonaws.com".format(
-            self.resource_id, self.backend.region
+            self.resource_id, self.backend.region_name
         )
 
     # Commenting this out for now because it breaks the stupid GraphQL snapshottests in the RDS Broker...
@@ -285,9 +283,9 @@ class DBInstance(TaggableRDSResource, EventMixin, BaseRDSModel):
     ):
         properties = cloudformation_json["Properties"]
         if "DBInstanceIdentifier" not in properties:
-            properties["DBInstanceIdentifier"] = resource_name.lower() + get_random_hex(
-                12
-            )
+            properties[
+                "DBInstanceIdentifier"
+            ] = resource_name.lower() + mock_random.get_random_hex(12)
         backend = cls.get_regional_backend(region_name)
         if "SourceDBInstanceIdentifier" in properties:
             params = utils.parse_cf_properties(
@@ -312,9 +310,9 @@ class DBInstance(TaggableRDSResource, EventMixin, BaseRDSModel):
         replicas = []
         from . import rds3_backends
 
-        for backend in rds3_backends.values():
+        for backend in rds3_backends[self.backend.account_id].values():
             for db_instance in backend.db_instances.values():
-                if backend.region == self.backend.region:
+                if backend.region_name == self.backend.region_name:
                     if (
                         db_instance.read_replica_source_db_instance_identifier
                         == self.resource_id
@@ -331,9 +329,7 @@ class DBInstance(TaggableRDSResource, EventMixin, BaseRDSModel):
 
 class ClusteredDBInstance(DBInstance):
     def __init__(self, backend, db_instance_identifier, **kwargs):
-        super(ClusteredDBInstance, self).__init__(
-            backend, db_instance_identifier, **kwargs
-        )
+        super().__init__(backend, db_instance_identifier, **kwargs)
         cluster_id = kwargs.get("db_cluster_identifier")
         self.cluster = self.backend.get_db_cluster(cluster_id)
         self.is_cluster_writer = True if not self.cluster.members else False
@@ -343,7 +339,8 @@ class ClusteredDBInstance(DBInstance):
             raise AttributeError(name)
         if hasattr(self.cluster, name):
             return getattr(self.cluster, name)
-        return super(ClusteredDBInstance, self).__getattr__(name)
+        # Default behaviour
+        return self.__getattribute__(name)
 
     # TODO: Need to understand better how this works with Aurora instances.
     # According to the boto3 documentation, `db_name` is valid:
@@ -361,9 +358,8 @@ class ClusteredDBInstance(DBInstance):
         self._db_name = value
 
 
-class DBInstanceBackend(BaseRDSBackend):
+class DBInstanceBackend:
     def __init__(self):
-        super(DBInstanceBackend, self).__init__()
         self.db_instances = OrderedDict()
         self.arn_regex = re_compile(
             r"^arn:aws:rds:.*:[0-9]*:(db|es|og|pg|ri|secgrp|snapshot|subgrp):.*$"
@@ -452,7 +448,7 @@ class DBInstanceBackend(BaseRDSBackend):
     ):
         source_db_instance = self.find_db_from_id(source_db_instance_identifier)
         db_args = dict(**source_db_instance.__dict__)
-        if source_db_instance.region != self.region or multi_az:
+        if source_db_instance.region != self.region_name or multi_az:
             db_args.pop("availability_zone", None)
         # Use our backend and update with any user-provided parameters.
         db_args.update(backend=self, multi_az=multi_az, **kwargs)
@@ -465,7 +461,7 @@ class DBInstanceBackend(BaseRDSBackend):
         self.db_instances[db_instance_identifier] = db_instance
         return db_instance
 
-    def describe_db_instances(self, db_instance_identifier=None, **kwargs):
+    def describe_db_instances(self, db_instance_identifier=None, **_):
         if db_instance_identifier:
             if db_instance_identifier in self.db_instances:
                 return [self.db_instances[db_instance_identifier]]
@@ -484,7 +480,7 @@ class DBInstanceBackend(BaseRDSBackend):
         database.update(db_kwargs)
         return database
 
-    def reboot_db_instance(self, db_instance_identifier=None, **kwargs):
+    def reboot_db_instance(self, db_instance_identifier=None, **_):
         database = self.get_db_instance(db_instance_identifier)
         database.reboot()
         return database

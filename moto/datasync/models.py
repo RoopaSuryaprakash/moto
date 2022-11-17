@@ -1,7 +1,5 @@
-from boto3 import Session
-
-from moto.compat import OrderedDict
-from moto.core import BaseBackend, BaseModel
+from collections import OrderedDict
+from moto.core import BaseBackend, BackendDict, BaseModel
 
 from .exceptions import InvalidRequestException
 
@@ -15,9 +13,7 @@ class Location(BaseModel):
         self.metadata = metadata
         self.typ = typ
         # Generate ARN
-        self.arn = "arn:aws:datasync:{0}:111222333444:location/loc-{1}".format(
-            region_name, str(arn_counter).zfill(17)
-        )
+        self.arn = f"arn:aws:datasync:{region_name}:111222333444:location/loc-{str(arn_counter).zfill(17)}"
 
 
 class Task(BaseModel):
@@ -38,9 +34,7 @@ class Task(BaseModel):
         self.status = "AVAILABLE"
         self.current_task_execution_arn = None
         # Generate ARN
-        self.arn = "arn:aws:datasync:{0}:111222333444:task/task-{1}".format(
-            region_name, str(arn_counter).zfill(17)
-        )
+        self.arn = f"arn:aws:datasync:{region_name}:111222333444:task/task-{str(arn_counter).zfill(17)}"
 
 
 class TaskExecution(BaseModel):
@@ -65,7 +59,7 @@ class TaskExecution(BaseModel):
 
     def __init__(self, task_arn, arn_counter=0):
         self.task_arn = task_arn
-        self.arn = "{0}/execution/exec-{1}".format(task_arn, str(arn_counter).zfill(17))
+        self.arn = f"{task_arn}/execution/exec-{str(arn_counter).zfill(17)}"
         self.status = self.TASK_EXECUTION_INTERMEDIATE_STATES[0]
 
     # Simulate a task execution
@@ -82,23 +76,19 @@ class TaskExecution(BaseModel):
                     else:
                         self.status = self.TASK_EXECUTION_SUCCESS_STATES[0]
                     return
-        raise Exception(
-            "TaskExecution.iterate_status: Unknown status={0}".format(self.status)
-        )
+        raise Exception(f"TaskExecution.iterate_status: Unknown status={self.status}")
 
     def cancel(self):
         if self.status not in self.TASK_EXECUTION_INTERMEDIATE_STATES:
             raise InvalidRequestException(
-                "Sync task cannot be cancelled in its current status: {0}".format(
-                    self.status
-                )
+                f"Sync task cannot be cancelled in its current status: {self.status}"
             )
         self.status = "ERROR"
 
 
 class DataSyncBackend(BaseBackend):
-    def __init__(self, region_name):
-        self.region_name = region_name
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         # Always increase when new things are created
         # This ensures uniqueness
         self.arn_counter = 0
@@ -106,11 +96,12 @@ class DataSyncBackend(BaseBackend):
         self.tasks = OrderedDict()
         self.task_executions = OrderedDict()
 
-    def reset(self):
-        region_name = self.region_name
-        self._reset_model_refs()
-        self.__dict__ = {}
-        self.__init__(region_name)
+    @staticmethod
+    def default_vpc_endpoint_service(service_region, zones):
+        """Default VPC endpoint service."""
+        return BaseBackend.default_vpc_endpoint_service_factory(
+            service_region, zones, "datasync"
+        )
 
     def create_location(self, location_uri, typ=None, metadata=None):
         """
@@ -134,14 +125,10 @@ class DataSyncBackend(BaseBackend):
 
     def _get_location(self, location_arn, typ):
         if location_arn not in self.locations:
-            raise InvalidRequestException(
-                "Location {0} is not found.".format(location_arn)
-            )
+            raise InvalidRequestException(f"Location {location_arn} is not found.")
         location = self.locations[location_arn]
         if location.typ != typ:
-            raise InvalidRequestException(
-                "Invalid Location type: {0}".format(location.typ)
-            )
+            raise InvalidRequestException(f"Invalid Location type: {location.typ}")
         return location
 
     def delete_location(self, location_arn):
@@ -154,12 +141,10 @@ class DataSyncBackend(BaseBackend):
         self, source_location_arn, destination_location_arn, name, metadata=None
     ):
         if source_location_arn not in self.locations:
-            raise InvalidRequestException(
-                "Location {0} not found.".format(source_location_arn)
-            )
+            raise InvalidRequestException(f"Location {source_location_arn} not found.")
         if destination_location_arn not in self.locations:
             raise InvalidRequestException(
-                "Location {0} not found.".format(destination_location_arn)
+                f"Location {destination_location_arn} not found."
             )
         self.arn_counter = self.arn_counter + 1
         task = Task(
@@ -185,9 +170,7 @@ class DataSyncBackend(BaseBackend):
             task.name = name
             task.metadata = metadata
         else:
-            raise InvalidRequestException(
-                "Sync task {0} is not found.".format(task_arn)
-            )
+            raise InvalidRequestException(f"Sync task {task_arn} is not found.")
 
     def delete_task(self, task_arn):
         if task_arn in self.tasks:
@@ -221,15 +204,7 @@ class DataSyncBackend(BaseBackend):
             self.tasks[task_arn].current_task_execution_arn = None
             self.tasks[task_arn].status = "AVAILABLE"
             return
-        raise InvalidRequestException(
-            "Sync task {0} is not found.".format(task_execution_arn)
-        )
+        raise InvalidRequestException(f"Sync task {task_execution_arn} is not found.")
 
 
-datasync_backends = {}
-for region in Session().get_available_regions("datasync"):
-    datasync_backends[region] = DataSyncBackend(region)
-for region in Session().get_available_regions("datasync", partition_name="aws-us-gov"):
-    datasync_backends[region] = DataSyncBackend(region)
-for region in Session().get_available_regions("datasync", partition_name="aws-cn"):
-    datasync_backends[region] = DataSyncBackend(region)
+datasync_backends = BackendDict(DataSyncBackend, "datasync")

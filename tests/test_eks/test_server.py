@@ -1,14 +1,12 @@
-from __future__ import unicode_literals
-
 import json
 from copy import deepcopy
 
 import pytest
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 
 import moto.server as server
 from moto import mock_eks
-from moto.core import ACCOUNT_ID
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 from moto.eks.exceptions import ResourceInUseException, ResourceNotFoundException
 from moto.eks.models import (
     CLUSTER_EXISTS_MSG,
@@ -26,7 +24,7 @@ from tests.test_eks.test_eks_constants import (
     DEFAULT_HTTP_HEADERS,
     DEFAULT_REGION,
     Endpoints,
-    FargateAttributes,
+    FargateProfileAttributes,
     HttpHeaders,
     NodegroupAttributes,
     NODEROLE_ARN_KEY,
@@ -81,20 +79,20 @@ class TestNodegroup:
     ]
 
 
-@pytest.fixture(autouse=True)
-def test_client():
-    backend = server.create_backend_app(SERVICE)
+@pytest.fixture(autouse=True, name="test_client")
+def fixture_test_client():
+    backend = server.create_backend_app(service=SERVICE)
     yield backend.test_client()
 
 
-@pytest.fixture(scope="function")
-def create_cluster(test_client):
+@pytest.fixture(scope="function", name="create_cluster")
+def fixtue_create_cluster(test_client):
     def create_and_verify_cluster(client, name):
         """Creates one valid cluster and verifies return status code 200."""
         data = deepcopy(TestCluster.data)
         data.update(name=name)
         response = client.post(
-            TestCluster.endpoint, data=json.dumps(data), headers=DEFAULT_HTTP_HEADERS,
+            TestCluster.endpoint, data=json.dumps(data), headers=DEFAULT_HTTP_HEADERS
         )
         response.status_code.should.equal(StatusCodes.OK)
 
@@ -108,14 +106,14 @@ def create_cluster(test_client):
     yield _execute
 
 
-@pytest.fixture(scope="function", autouse=True)
-def create_nodegroup(test_client):
+@pytest.fixture(scope="function", autouse=True, name="create_nodegroup")
+def fixture_create_nodegroup(test_client):
     def create_and_verify_nodegroup(client, name):
         """Creates one valid nodegroup and verifies return status code 200."""
         data = deepcopy(TestNodegroup.data)
         data.update(nodegroupName=name)
         response = client.post(
-            TestNodegroup.endpoint, data=json.dumps(data), headers=DEFAULT_HTTP_HEADERS,
+            TestNodegroup.endpoint, data=json.dumps(data), headers=DEFAULT_HTTP_HEADERS
         )
         response.status_code.should.equal(StatusCodes.OK)
 
@@ -169,7 +167,7 @@ def test_eks_create_nodegroup_without_cluster(test_client):
     expected_data = {
         ClusterAttributes.CLUSTER_NAME: None,
         NodegroupAttributes.NODEGROUP_NAME: None,
-        FargateAttributes.PROFILE_NAME: None,
+        FargateProfileAttributes.FARGATE_PROFILE_NAME: None,
         AddonAttributes.ADDON_NAME: None,
         ResponseAttributes.MESSAGE: expected_msg,
     }
@@ -276,6 +274,7 @@ def test_eks_describe_existing_cluster(test_client, create_cluster):
 
     response.status_code.should.equal(StatusCodes.OK)
     result_data[ClusterAttributes.NAME].should.equal(TestCluster.cluster_name)
+    result_data[ClusterAttributes.ENCRYPTION_CONFIG].should.equal([])
     all_arn_values_should_be_valid(
         expected_arn_values=TestCluster.expected_arn_values,
         pattern=RegExTemplates.CLUSTER_ARN,
@@ -290,7 +289,7 @@ def test_eks_describe_nonexisting_cluster(test_client):
     expected_data = {
         ClusterAttributes.CLUSTER_NAME: None,
         NodegroupAttributes.NODEGROUP_NAME: None,
-        FargateAttributes.PROFILE_NAME: None,
+        FargateProfileAttributes.FARGATE_PROFILE_NAME: None,
         AddonAttributes.ADDON_NAME: None,
         ResponseAttributes.MESSAGE: expected_msg,
     }
@@ -340,7 +339,7 @@ def test_eks_describe_nonexisting_nodegroup(test_client, create_cluster):
     expected_data = {
         ClusterAttributes.CLUSTER_NAME: TestNodegroup.cluster_name,
         NodegroupAttributes.NODEGROUP_NAME: TestNodegroup.nodegroup_name,
-        FargateAttributes.PROFILE_NAME: None,
+        FargateProfileAttributes.FARGATE_PROFILE_NAME: None,
         AddonAttributes.ADDON_NAME: None,
         ResponseAttributes.MESSAGE: expected_msg,
     }
@@ -362,7 +361,7 @@ def test_eks_describe_nodegroup_nonexisting_cluster(test_client):
     expected_data = {
         ClusterAttributes.CLUSTER_NAME: TestNodegroup.cluster_name,
         NodegroupAttributes.NODEGROUP_NAME: TestNodegroup.nodegroup_name,
-        FargateAttributes.PROFILE_NAME: None,
+        FargateProfileAttributes.FARGATE_PROFILE_NAME: None,
         AddonAttributes.ADDON_NAME: None,
         ResponseAttributes.MESSAGE: expected_msg,
     }
@@ -404,7 +403,7 @@ def test_eks_delete_nonexisting_cluster(test_client):
     expected_data = {
         ClusterAttributes.CLUSTER_NAME: None,
         NodegroupAttributes.NODEGROUP_NAME: None,
-        FargateAttributes.PROFILE_NAME: None,
+        FargateProfileAttributes.FARGATE_PROFILE_NAME: None,
         AddonAttributes.ADDON_NAME: None,
         ResponseAttributes.MESSAGE: expected_msg,
     }
@@ -476,7 +475,7 @@ def test_eks_delete_nonexisting_nodegroup(test_client, create_cluster):
     expected_data = {
         ClusterAttributes.CLUSTER_NAME: TestNodegroup.cluster_name,
         NodegroupAttributes.NODEGROUP_NAME: TestNodegroup.nodegroup_name,
-        FargateAttributes.PROFILE_NAME: None,
+        FargateProfileAttributes.FARGATE_PROFILE_NAME: None,
         AddonAttributes.ADDON_NAME: None,
         ResponseAttributes.MESSAGE: expected_msg,
     }
@@ -501,7 +500,7 @@ def test_eks_delete_nodegroup_nonexisting_cluster(test_client):
     expected_data = {
         ClusterAttributes.CLUSTER_NAME: None,
         NodegroupAttributes.NODEGROUP_NAME: None,
-        FargateAttributes.PROFILE_NAME: None,
+        FargateProfileAttributes.FARGATE_PROFILE_NAME: None,
         AddonAttributes.ADDON_NAME: None,
         ResponseAttributes.MESSAGE: expected_msg,
     }

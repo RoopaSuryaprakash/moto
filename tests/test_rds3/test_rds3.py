@@ -1,11 +1,8 @@
-from __future__ import unicode_literals
-from __future__ import print_function
-
-from botocore.exceptions import ClientError, ParamValidationError
+# pylint: disable=unused-import
+from botocore.exceptions import ClientError
 import boto3
-import boto.rds
 import sure  # noqa
-from . import mock_ec2, mock_kms, mock_rds, mock_rds_deprecated
+from . import mock_ec2, mock_kms, mock_rds
 
 
 # TODO: Always test empty response, singular item in list and plural in list!!!
@@ -34,7 +31,7 @@ def test_create_database():
         "my_sg"
     )
     database["DBInstance"]["DBInstanceArn"].should.equal(
-        "arn:aws:rds:us-west-2:1234567890:db:db-master-1"
+        "arn:aws:rds:us-west-2:123456789012:db:db-master-1"
     )
     database["DBInstance"]["DBInstanceStatus"].should.equal("available")
     database["DBInstance"]["DBName"].should.equal("staging-postgres")
@@ -165,7 +162,7 @@ def test_fail_to_stop_multi_az():
 @mock_rds
 def test_fail_to_stop_readreplica():
     conn = boto3.client("rds", region_name="us-west-2")
-    database = conn.create_db_instance(
+    conn.create_db_instance(
         DBInstanceIdentifier="db-master-1",
         AllocatedStorage=10,
         Engine="postgres",
@@ -232,7 +229,7 @@ def test_get_databases():
     list(instances["DBInstances"]).should.have.length_of(1)
     instances["DBInstances"][0]["DBInstanceIdentifier"].should.equal("db-master-1")
     instances["DBInstances"][0]["DBInstanceArn"].should.equal(
-        "arn:aws:rds:us-west-2:1234567890:db:db-master-1"
+        "arn:aws:rds:us-west-2:123456789012:db:db-master-1"
     )
 
 
@@ -271,7 +268,7 @@ def test_describe_non_existant_database():
 @mock_rds
 def test_modify_db_instance():
     conn = boto3.client("rds", region_name="us-west-2")
-    database = conn.create_db_instance(
+    conn.create_db_instance(
         DBInstanceIdentifier="db-master-1",
         AllocatedStorage=10,
         DBInstanceClass="db.m1.small",
@@ -293,7 +290,7 @@ def test_modify_db_instance():
 @mock_rds
 def test_rename_db_instance():
     conn = boto3.client("rds", region_name="us-west-2")
-    database = conn.create_db_instance(
+    conn.create_db_instance(
         DBInstanceIdentifier="db-master-1",
         AllocatedStorage=10,
         DBInstanceClass="db.m1.small",
@@ -387,14 +384,6 @@ def test_delete_database():
 
 
 @mock_rds
-def test_delete_non_existant_database():
-    conn = boto3.client("rds2", region_name="us-west-2")
-    conn.delete_db_instance.when.called_with(
-        DBInstanceIdentifier="not-a-db"
-    ).should.throw(ClientError)
-
-
-@mock_rds
 def test_create_db_snapshots():
     conn = boto3.client("rds", region_name="us-west-2")
     conn.create_db_snapshot.when.called_with(
@@ -478,7 +467,6 @@ def test_delete_db_snapshot():
         DBInstanceIdentifier="db-primary-1", DBSnapshotIdentifier="snapshot-1"
     )
 
-    conn.describe_db_snapshots(DBSnapshotIdentifier="snapshot-1").get("DBSnapshots")[0]
     conn.delete_db_snapshot(DBSnapshotIdentifier="snapshot-1")
     conn.describe_db_snapshots.when.called_with(
         DBSnapshotIdentifier="snapshot-1"
@@ -486,7 +474,7 @@ def test_delete_db_snapshot():
 
 
 @mock_rds
-def test_delete_non_existant_database():
+def test_delete_non_existent_database():
     conn = boto3.client("rds", region_name="us-west-2")
     conn.delete_db_instance.when.called_with(
         DBInstanceIdentifier="not-a-db"
@@ -505,7 +493,7 @@ def test_list_tags_invalid_arn():
 def test_list_tags_db():
     conn = boto3.client("rds", region_name="us-west-2")
     result = conn.list_tags_for_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:db:foo"
+        ResourceName="arn:aws:rds:us-west-2:123456789012:db:foo"
     )
     result["TagList"].should.equal([])
     test_instance = conn.create_db_instance(
@@ -517,7 +505,16 @@ def test_list_tags_db():
         MasterUserPassword="hunter2",
         Port=1234,
         DBSecurityGroups=["my_sg"],
-        Tags=[{"Key": "foo", "Value": "bar",}, {"Key": "foo1", "Value": "bar1",},],
+        Tags=[
+            {
+                "Key": "foo",
+                "Value": "bar",
+            },
+            {
+                "Key": "foo1",
+                "Value": "bar1",
+            },
+        ],
     )
     result = conn.list_tags_for_resource(
         ResourceName=test_instance["DBInstance"]["DBInstanceArn"]
@@ -539,18 +536,36 @@ def test_add_tags_db():
         MasterUserPassword="hunter2",
         Port=1234,
         DBSecurityGroups=["my_sg"],
-        Tags=[{"Key": "foo", "Value": "bar",}, {"Key": "foo1", "Value": "bar1",},],
+        Tags=[
+            {
+                "Key": "foo",
+                "Value": "bar",
+            },
+            {
+                "Key": "foo1",
+                "Value": "bar1",
+            },
+        ],
     )
     result = conn.list_tags_for_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:db:db-without-tags"
+        ResourceName="arn:aws:rds:us-west-2:123456789012:db:db-without-tags"
     )
     list(result["TagList"]).should.have.length_of(2)
     conn.add_tags_to_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:db:db-without-tags",
-        Tags=[{"Key": "foo", "Value": "fish",}, {"Key": "foo2", "Value": "bar2",},],
+        ResourceName="arn:aws:rds:us-west-2:123456789012:db:db-without-tags",
+        Tags=[
+            {
+                "Key": "foo",
+                "Value": "fish",
+            },
+            {
+                "Key": "foo2",
+                "Value": "bar2",
+            },
+        ],
     )
     result = conn.list_tags_for_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:db:db-without-tags"
+        ResourceName="arn:aws:rds:us-west-2:123456789012:db:db-without-tags"
     )
     list(result["TagList"]).should.have.length_of(3)
 
@@ -567,17 +582,27 @@ def test_remove_tags_db():
         MasterUserPassword="hunter2",
         Port=1234,
         DBSecurityGroups=["my_sg"],
-        Tags=[{"Key": "foo", "Value": "bar",}, {"Key": "foo1", "Value": "bar1",},],
+        Tags=[
+            {
+                "Key": "foo",
+                "Value": "bar",
+            },
+            {
+                "Key": "foo1",
+                "Value": "bar1",
+            },
+        ],
     )
     result = conn.list_tags_for_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:db:db-with-tags"
+        ResourceName="arn:aws:rds:us-west-2:123456789012:db:db-with-tags"
     )
     list(result["TagList"]).should.have.length_of(2)
     conn.remove_tags_from_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:db:db-with-tags", TagKeys=["foo"]
+        ResourceName="arn:aws:rds:us-west-2:123456789012:db:db-with-tags",
+        TagKeys=["foo"],
     )
     result = conn.list_tags_for_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:db:db-with-tags"
+        ResourceName="arn:aws:rds:us-west-2:123456789012:db:db-with-tags"
     )
     len(result["TagList"]).should.equal(1)
 
@@ -642,7 +667,7 @@ def test_delete_database_security_group():
 
 
 @mock_rds
-def test_delete_non_existant_security_group():
+def test_delete_non_existent_security_group():
     conn = boto3.client("rds", region_name="us-west-2")
     conn.delete_db_security_group.when.called_with(
         DBSecurityGroupName="not-a-db"
@@ -711,8 +736,14 @@ def test_add_security_group_to_database():
 @mock_rds
 def test_list_tags_security_group():
     test_tags = [
-        {"Key": "foo", "Value": "bar",},
-        {"Key": "foo1", "Value": "bar1",},
+        {
+            "Key": "foo",
+            "Value": "bar",
+        },
+        {
+            "Key": "foo1",
+            "Value": "bar1",
+        },
     ]
     conn = boto3.client("rds", region_name="us-west-2")
     security_group = conn.create_db_security_group(
@@ -736,7 +767,7 @@ def test_add_tags_security_group():
         DBSecurityGroupName="db_sg", DBSecurityGroupDescription="DB Security Group"
     )["DBSecurityGroup"]["DBSecurityGroupName"]
 
-    resource = "arn:aws:rds:us-west-2:1234567890:secgrp:{0}".format(security_group)
+    resource = "arn:aws:rds:us-west-2:123456789012:secgrp:{0}".format(security_group)
     conn.add_tags_to_resource(
         ResourceName=resource,
         Tags=[{"Value": "bar", "Key": "foo"}, {"Value": "bar1", "Key": "foo1"}],
@@ -760,7 +791,7 @@ def test_remove_tags_security_group():
         Tags=[{"Value": "bar", "Key": "foo"}, {"Value": "bar1", "Key": "foo1"}],
     )["DBSecurityGroup"]["DBSecurityGroupName"]
 
-    resource = "arn:aws:rds:us-west-2:1234567890:secgrp:{0}".format(security_group)
+    resource = "arn:aws:rds:us-west-2:123456789012:secgrp:{0}".format(security_group)
     conn.remove_tags_from_resource(ResourceName=resource, TagKeys=["foo"])
 
     result = conn.list_tags_for_resource(ResourceName=resource)
@@ -910,7 +941,7 @@ def test_list_tags_database_subnet_group():
         Tags=[{"Value": "bar", "Key": "foo"}, {"Value": "bar1", "Key": "foo1"}],
     )["DBSubnetGroup"]["DBSubnetGroupName"]
     result = conn.list_tags_for_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:subgrp:{0}".format(subnet)
+        ResourceName="arn:aws:rds:us-west-2:123456789012:subgrp:{0}".format(subnet)
     )
     result["TagList"].should.equal(
         [{"Value": "bar", "Key": "foo"}, {"Value": "bar1", "Key": "foo1"}]
@@ -936,7 +967,7 @@ def test_add_tags_database_subnet_group():
         SubnetIds=[subnet["SubnetId"]],
         Tags=[],
     )["DBSubnetGroup"]["DBSubnetGroupName"]
-    resource = "arn:aws:rds:us-west-2:1234567890:subgrp:{0}".format(subnet)
+    resource = "arn:aws:rds:us-west-2:123456789012:subgrp:{0}".format(subnet)
 
     conn.add_tags_to_resource(
         ResourceName=resource,
@@ -968,7 +999,7 @@ def test_remove_tags_database_subnet_group():
         SubnetIds=[subnet["SubnetId"]],
         Tags=[{"Value": "bar", "Key": "foo"}, {"Value": "bar1", "Key": "foo1"}],
     )["DBSubnetGroup"]["DBSubnetGroupName"]
-    resource = "arn:aws:rds:us-west-2:1234567890:subgrp:{0}".format(subnet)
+    resource = "arn:aws:rds:us-west-2:123456789012:subgrp:{0}".format(subnet)
 
     conn.remove_tags_from_resource(ResourceName=resource, TagKeys=["foo"])
 
@@ -980,7 +1011,7 @@ def test_remove_tags_database_subnet_group():
 def test_create_database_replica():
     conn = boto3.client("rds", region_name="us-west-2")
 
-    database = conn.create_db_instance(
+    conn.create_db_instance(
         DBInstanceIdentifier="db-master-1",
         AllocatedStorage=10,
         Engine="postgres",
@@ -1062,7 +1093,7 @@ def test_create_db_parameter_group():
 @mock_rds
 def test_create_db_instance_with_parameter_group():
     conn = boto3.client("rds", region_name="us-west-2")
-    db_parameter_group = conn.create_db_parameter_group(
+    conn.create_db_parameter_group(
         DBParameterGroupName="test",
         DBParameterGroupFamily="mysql5.6",
         Description="test parameter group",
@@ -1124,7 +1155,7 @@ def test_modify_db_instance_with_parameter_group():
         "in-sync"
     )
 
-    db_parameter_group = conn.create_db_parameter_group(
+    conn.create_db_parameter_group(
         DBParameterGroupName="test",
         DBParameterGroupFamily="mysql5.6",
         Description="test parameter group",
@@ -1244,10 +1275,10 @@ def test_modify_db_parameter_group():
 
 
 @mock_rds
-def test_delete_non_existant_db_parameter_group():
+def test_delete_non_existent_db_parameter_group():
     conn = boto3.client("rds", region_name="us-west-2")
     conn.delete_db_parameter_group.when.called_with(
-        DBParameterGroupName="non-existant"
+        DBParameterGroupName="non-existent"
     ).should.throw(ClientError)
 
 
@@ -1258,10 +1289,15 @@ def test_create_parameter_group_with_tags():
         DBParameterGroupName="test",
         DBParameterGroupFamily="mysql5.6",
         Description="test parameter group",
-        Tags=[{"Key": "foo", "Value": "bar",}],
+        Tags=[
+            {
+                "Key": "foo",
+                "Value": "bar",
+            }
+        ],
     )
     result = conn.list_tags_for_resource(
-        ResourceName="arn:aws:rds:us-west-2:1234567890:pg:test"
+        ResourceName="arn:aws:rds:us-west-2:123456789012:pg:test"
     )
     result["TagList"].should.equal([{"Value": "bar", "Key": "foo"}])
 
@@ -1269,7 +1305,6 @@ def test_create_parameter_group_with_tags():
 @mock_rds
 def test_bool_create_params():
     for bool_value in [True, False]:
-        print("Bool value: {}".format(bool_value))
         bool_params = {
             "AutoMinorVersionUpgrade": bool_value,
             "CopyTagsToSnapshot": bool_value,
@@ -1292,7 +1327,6 @@ def test_bool_create_params():
         ).get("DBInstances")[0]
         for resp in [resp_create, resp_describe]:
             for param in bool_params:
-                print(param)
                 resp[param].should.equal(bool_value)
         client.delete_db_instance(DBInstanceIdentifier="test-bool-params")
 
@@ -1301,19 +1335,17 @@ def test_bool_create_params():
 
 
 @mock_rds
-def test_delete_non_existent_db_parameter_group():
-    conn = boto3.client("rds", region_name="us-west-2")
-    conn.delete_db_parameter_group.when.called_with(
-        DBParameterGroupName="non-existant"
-    ).should.throw(ClientError)
-
-
-@mock_rds
 def test_copy_tags_to_snapshot():
     db_instance_identifier = "test-db-instance"
     instance_tags = [
-        {"Key": "foo", "Value": "bar",},
-        {"Key": "foo1", "Value": "bar1",},
+        {
+            "Key": "foo",
+            "Value": "bar",
+        },
+        {
+            "Key": "foo1",
+            "Value": "bar1",
+        },
     ]
     client = boto3.client("rds", region_name="us-west-2")
     client.create_db_instance(
@@ -1339,8 +1371,14 @@ def test_copy_tags_to_snapshot():
         resp = client.list_tags_for_resource(ResourceName=snapshot["DBSnapshotArn"])
         resp["TagList"].should.equal(instance_tags)
     snapshot_tags = [
-        {"Key": "foo2", "Value": "bar2",},
-        {"Key": "foo3", "Value": "bar3",},
+        {
+            "Key": "foo2",
+            "Value": "bar2",
+        },
+        {
+            "Key": "foo3",
+            "Value": "bar3",
+        },
     ]
     # If you supply tags on snapshot creation, AWS does *not* copy tags from the instance.
     snapshot = client.create_db_snapshot(
@@ -1362,28 +1400,34 @@ def test_copy_tags_to_snapshot():
     resp["TagList"].should.equal(instance_tags + snapshot_tags)
 
 
-@mock_rds_deprecated
-def test_create_cross_region_database_replica():
-    west_1_conn = boto.rds.connect_to_region("us-west-1")
-    west_2_conn = boto.rds.connect_to_region("us-west-2")
+@mock_rds
+def test_create_database_replica_cross_region():
+    us1 = boto3.client("rds", region_name="us-east-1")
+    us2 = boto3.client("rds", region_name="us-west-2")
 
-    primary = west_1_conn.create_dbinstance(
-        "db-master-1", 10, "db.m1.small", "root", "hunter2"
+    source_id = "db-master-1"
+    source_arn = us1.create_db_instance(
+        DBInstanceIdentifier=source_id,
+        AllocatedStorage=10,
+        Engine="postgres",
+        DBInstanceClass="db.m1.small",
+    )["DBInstance"]["DBInstanceArn"]
+
+    target_id = "db-replica-1"
+    target_arn = us2.create_db_instance_read_replica(
+        DBInstanceIdentifier=target_id,
+        SourceDBInstanceIdentifier=source_arn,
+        DBInstanceClass="db.m1.small",
+    )["DBInstance"]["DBInstanceArn"]
+
+    source_db = us1.describe_db_instances(DBInstanceIdentifier=source_id)[
+        "DBInstances"
+    ][0]
+    source_db.should.have.key("ReadReplicaDBInstanceIdentifiers").equals([target_arn])
+
+    target_db = us2.describe_db_instances(DBInstanceIdentifier=target_id)[
+        "DBInstances"
+    ][0]
+    target_db.should.have.key("ReadReplicaSourceDBInstanceIdentifier").equals(
+        source_arn
     )
-    primary_arn = getattr(primary, "DBInstanceArn")
-
-    replica = west_2_conn.create_dbinstance_read_replica(
-        "replica", primary_arn, "db.m1.small"
-    )
-    replica_arn = getattr(replica, "DBInstanceArn")
-
-    primary = west_1_conn.get_all_dbinstances("db-master-1")[0]
-    primary.read_replica_dbinstance_identifiers[0].should.equal(replica_arn)
-
-    replica = west_2_conn.get_all_dbinstances("replica")[0]
-    replica.instance_class.should.equal("db.m1.small")
-
-    west_2_conn.delete_dbinstance("replica")
-
-    primary = west_1_conn.get_all_dbinstances("db-master-1")[0]
-    list(primary.read_replica_dbinstance_identifiers).should.have.length_of(0)

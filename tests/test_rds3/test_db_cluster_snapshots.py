@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import boto3
 from botocore.exceptions import ClientError
 
@@ -8,8 +6,14 @@ from sure import this
 
 
 test_tags = [
-    {"Key": "foo", "Value": "bar",},
-    {"Key": "foo1", "Value": "bar1",},
+    {
+        "Key": "foo",
+        "Value": "bar",
+    },
+    {
+        "Key": "foo1",
+        "Value": "bar1",
+    },
 ]
 
 

@@ -1,13 +1,10 @@
 import json
 from abc import ABCMeta, abstractmethod
 
-import six
-
-from moto.sts.models import ACCOUNT_ID
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 
 
-@six.add_metaclass(ABCMeta)
-class TestConfig:
+class TestConfig(metaclass=ABCMeta):
     """Provides the interface to use for creating test configurations.
 
     This class will provide the interface for what information will be
@@ -186,7 +183,7 @@ class ModelTestConfig(TestConfig):
                     "Type": "AWS::SageMaker::Model",
                     "Properties": {
                         "ExecutionRoleArn": execution_role_arn,
-                        "PrimaryContainer": {"Image": image,},
+                        "PrimaryContainer": {"Image": image},
                     },
                 },
             },

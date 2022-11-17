@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import boto3
 from botocore.exceptions import ClientError
 
@@ -11,8 +9,14 @@ from sure import this
 # TODO: Test that calling describe on cluster members returns the cluster DatabaseName as the DBName
 
 test_tags = [
-    {"Key": "foo", "Value": "bar",},
-    {"Key": "foo1", "Value": "bar1",},
+    {
+        "Key": "foo",
+        "Value": "bar",
+    },
+    {
+        "Key": "foo1",
+        "Value": "bar1",
+    },
 ]
 
 
@@ -91,7 +95,9 @@ def test_create_db_cluster_with_parameters():
         "DatabaseName": "custom",
         "DBClusterIdentifier": "test-cluster",
         "DBClusterParameterGroupName": "default.aurora-postgresql9.6",
-        "VpcSecurityGroupIds": ["string",],
+        "VpcSecurityGroupIds": [
+            "string",
+        ],
         # 'DBSubnetGroupName': 'string',
         "Engine": "aurora-postgresql",
         "EngineVersion": "9.6.3",

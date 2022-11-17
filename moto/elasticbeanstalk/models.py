@@ -1,16 +1,12 @@
 import weakref
 
-from boto3 import Session
-
-from moto.core import BaseBackend, BaseModel, ACCOUNT_ID
+from moto.core import BaseBackend, BackendDict, BaseModel
 from .exceptions import InvalidParameterValueError, ResourceNotFoundException
 from .utils import make_arn
 
 
 class FakeEnvironment(BaseModel):
-    def __init__(
-        self, application, environment_name, solution_stack_name, tags,
-    ):
+    def __init__(self, application, environment_name, solution_stack_name, tags):
         self.application = weakref.proxy(
             application
         )  # weakref to break circular dependencies
@@ -24,8 +20,10 @@ class FakeEnvironment(BaseModel):
 
     @property
     def environment_arn(self):
-        resource_path = "%s/%s" % (self.application_name, self.environment_name)
-        return make_arn(self.region, ACCOUNT_ID, "environment", resource_path)
+        resource_path = f"{self.application_name}/{self.environment_name}"
+        return make_arn(
+            self.region, self.application.account_id, "environment", resource_path
+        )
 
     @property
     def platform_arn(self):
@@ -41,10 +39,13 @@ class FakeApplication(BaseModel):
         self.backend = weakref.proxy(backend)  # weakref to break cycles
         self.application_name = application_name
         self.environments = dict()
+        self.account_id = self.backend.account_id
+        self.region = self.backend.region_name
+        self.arn = make_arn(
+            self.region, self.account_id, "application", self.application_name
+        )
 
-    def create_environment(
-        self, environment_name, solution_stack_name, tags,
-    ):
+    def create_environment(self, environment_name, solution_stack_name, tags):
         if environment_name in self.environments:
             raise InvalidParameterValueError
 
@@ -58,41 +59,33 @@ class FakeApplication(BaseModel):
 
         return env
 
-    @property
-    def region(self):
-        return self.backend.region
-
-    @property
-    def arn(self):
-        return make_arn(self.region, ACCOUNT_ID, "application", self.application_name)
-
 
 class EBBackend(BaseBackend):
-    def __init__(self, region):
-        self.region = region
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         self.applications = dict()
 
-    def reset(self):
-        # preserve region
-        region = self.region
-        self._reset_model_refs()
-        self.__dict__ = {}
-        self.__init__(region)
+    @staticmethod
+    def default_vpc_endpoint_service(service_region, zones):
+        """Default VPC endpoint service."""
+        return BaseBackend.default_vpc_endpoint_service_factory(
+            service_region, zones, "elasticbeanstalk"
+        ) + BaseBackend.default_vpc_endpoint_service_factory(
+            service_region, zones, "elasticbeanstalk-health"
+        )
 
     def create_application(self, application_name):
         if application_name in self.applications:
             raise InvalidParameterValueError(
-                "Application {} already exists.".format(application_name)
+                f"Application {application_name} already exists."
             )
-        new_app = FakeApplication(backend=self, application_name=application_name,)
+        new_app = FakeApplication(backend=self, application_name=application_name)
         self.applications[application_name] = new_app
         return new_app
 
     def create_environment(self, app, environment_name, stack_name, tags):
         return app.create_environment(
-            environment_name=environment_name,
-            solution_stack_name=stack_name,
-            tags=tags,
+            environment_name=environment_name, solution_stack_name=stack_name, tags=tags
         )
 
     def describe_environments(self):
@@ -111,7 +104,7 @@ class EBBackend(BaseBackend):
             res = self._find_environment_by_arn(resource_arn)
         except KeyError:
             raise ResourceNotFoundException(
-                "Resource not found for ARN '{}'.".format(resource_arn)
+                f"Resource not found for ARN '{resource_arn}'."
             )
 
         for key, value in tags_to_add.items():
@@ -125,7 +118,7 @@ class EBBackend(BaseBackend):
             res = self._find_environment_by_arn(resource_arn)
         except KeyError:
             raise ResourceNotFoundException(
-                "Resource not found for ARN '{}'.".format(resource_arn)
+                f"Resource not found for ARN '{resource_arn}'."
             )
         return res.tags
 
@@ -137,14 +130,4 @@ class EBBackend(BaseBackend):
         raise KeyError()
 
 
-eb_backends = {}
-for region in Session().get_available_regions("elasticbeanstalk"):
-    eb_backends[region] = EBBackend(region)
-for region in Session().get_available_regions(
-    "elasticbeanstalk", partition_name="aws-us-gov"
-):
-    eb_backends[region] = EBBackend(region)
-for region in Session().get_available_regions(
-    "elasticbeanstalk", partition_name="aws-cn"
-):
-    eb_backends[region] = EBBackend(region)
+eb_backends = BackendDict(EBBackend, "elasticbeanstalk")

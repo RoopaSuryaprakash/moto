@@ -1,9 +1,8 @@
-from __future__ import unicode_literals
-
+# pylint: disable=unused-import
 from botocore.exceptions import ClientError, ParamValidationError
 import boto3
 import sure  # noqa
-from . import mock_ec2, mock_kms, mock_rds
+from . import mock_rds
 from sure import this
 
 
@@ -208,7 +207,7 @@ def test_modify_option_group_no_options():
 
 
 @mock_rds
-def test_modify_non_existant_option_group():
+def test_modify_non_existent_option_group():
     conn = boto3.client("rds", region_name="us-west-2")
     conn.modify_option_group.when.called_with(
         OptionGroupName="non-existant",
@@ -239,7 +238,16 @@ def test_add_tags_option_group():
     list(result["TagList"]).should.have.length_of(0)
     conn.add_tags_to_resource(
         ResourceName="arn:aws:rds:us-west-2:1234567890:og:test",
-        Tags=[{"Key": "foo", "Value": "fish",}, {"Key": "foo2", "Value": "bar2",}],
+        Tags=[
+            {
+                "Key": "foo",
+                "Value": "fish",
+            },
+            {
+                "Key": "foo2",
+                "Value": "bar2",
+            },
+        ],
     )
     result = conn.list_tags_for_resource(
         ResourceName="arn:aws:rds:us-west-2:1234567890:og:test"
@@ -261,7 +269,16 @@ def test_remove_tags_option_group():
     )
     conn.add_tags_to_resource(
         ResourceName="arn:aws:rds:us-west-2:1234567890:og:test",
-        Tags=[{"Key": "foo", "Value": "fish",}, {"Key": "foo2", "Value": "bar2",}],
+        Tags=[
+            {
+                "Key": "foo",
+                "Value": "fish",
+            },
+            {
+                "Key": "foo2",
+                "Value": "bar2",
+            },
+        ],
     )
     result = conn.list_tags_for_resource(
         ResourceName="arn:aws:rds:us-west-2:1234567890:og:test"

@@ -1,9 +1,7 @@
-from __future__ import unicode_literals
-
 from collections import defaultdict
 
-from moto.compat import OrderedDict
-from .base import BaseRDSBackend, BaseRDSModel
+from collections import OrderedDict
+from .base import BaseRDSModel
 from .tag import TaggableRDSResource
 from .. import utils
 from ..exceptions import (
@@ -20,7 +18,7 @@ class Parameter(object):
         parameter_value,
         description="",
         apply_method="immediately",
-        **kwargs
+        **_
     ):
         self.parameter_name = parameter_name
         self.parameter_value = parameter_value
@@ -47,7 +45,7 @@ class DBParameterGroup(TaggableRDSResource, BaseRDSModel):
         db_parameter_group_family,
         tags=None,
     ):
-        super(DBParameterGroup, self).__init__(backend)
+        super().__init__(backend)
         self.db_parameter_group_name = db_parameter_group_name
         self.description = description
         self.db_parameter_group_family = db_parameter_group_family
@@ -97,15 +95,17 @@ class DBParameterGroup(TaggableRDSResource, BaseRDSModel):
             "Parameters", {}
         ).items():
             db_parameter_group_parameters.append(
-                {"parameter_name": db_parameter, "parameter_value": db_parameter_value,}
+                {
+                    "parameter_name": db_parameter,
+                    "parameter_value": db_parameter_value,
+                }
             )
         db_parameter_group.update_parameters(db_parameter_group_parameters)
         return db_parameter_group
 
 
-class DBParameterGroupBackend(BaseRDSBackend):
+class DBParameterGroupBackend:
     def __init__(self):
-        super(DBParameterGroupBackend, self).__init__()
         self.db_parameter_groups = OrderedDict()
         for item in utils.default_db_parameter_groups:
             group = DBParameterGroup(
@@ -148,7 +148,7 @@ class DBParameterGroupBackend(BaseRDSBackend):
         self.db_parameter_groups[db_parameter_group_name] = db_parameter_group
         return db_parameter_group
 
-    def describe_db_parameter_groups(self, db_parameter_group_name=None, **kwargs):
+    def describe_db_parameter_groups(self, db_parameter_group_name=None, **_):
         if db_parameter_group_name:
             return [self.get_db_parameter_group(db_parameter_group_name)]
         return self.db_parameter_groups.values()
@@ -158,6 +158,6 @@ class DBParameterGroupBackend(BaseRDSBackend):
         db_parameter_group.update_parameters(parameters)
         return db_parameter_group_name
 
-    def describe_db_parameters(self, db_parameter_group_name=None, **kwargs):
+    def describe_db_parameters(self, db_parameter_group_name=None, **_):
         db_parameter_group = self.get_db_parameter_group(db_parameter_group_name)
         return db_parameter_group.parameters

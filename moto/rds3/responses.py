@@ -1,11 +1,8 @@
-from __future__ import unicode_literals
-
 import boto3
 
 from moto.core.responses import BaseResponse
 from . import utils
 from .exceptions import InvalidParameterValue, RDSError
-from .models import rds3_backends
 from .serialize import create_serializer
 
 
@@ -15,10 +12,12 @@ MAX_RECORDS = 100
 class RDSResponse(BaseResponse):
     @property
     def backend(self):
-        return rds3_backends[self.region]
+        from .models import rds3_backends
+
+        return rds3_backends[self.current_account][self.region]
 
     def __init__(self, *args):
-        super(RDSResponse, self).__init__()
+        super().__init__()
         self.setup_class(*args)
 
     @classmethod
@@ -42,6 +41,7 @@ class RDSResponse(BaseResponse):
         operation_model = client.meta.service_model.operation_model(action)
         action_method = api_to_method_mapping[action]
         http_status_code = 200
+        # backend = self.backend.backend  # Stupid new moto changes...
         if not hasattr(self.backend, action_method):
             raise NotImplementedError(
                 "The {0} action has not been implemented".format(action)

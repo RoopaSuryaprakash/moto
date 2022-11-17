@@ -1,8 +1,9 @@
-moto.egg-info/*
+moto*.egg-info/*
 dist/*
 .cache
 .tox
 .coverage
+coverage.xml
 cover/
 *.pyc
 *~
@@ -25,3 +26,6 @@ tests/file.tmp
 .venv/
 htmlcov/
 .~c9_*
+.coverage*
+docs/_build
+moto_recording

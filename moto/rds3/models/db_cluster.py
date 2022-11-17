@@ -1,9 +1,7 @@
-from __future__ import unicode_literals
-
 import datetime
 
-from moto.compat import OrderedDict
-from .base import BaseRDSBackend, BaseRDSModel
+from collections import OrderedDict
+from .base import BaseRDSModel
 from .event import EventMixin
 from .tag import TaggableRDSResource
 from .. import utils
@@ -41,7 +39,7 @@ class DBCluster(TaggableRDSResource, EventMixin, BaseRDSModel):
         vpc_security_group_ids=None,
         **kwargs
     ):
-        super(DBCluster, self).__init__(backend)
+        super().__init__(backend)
         self.allocated_storage = 1
         self.availability_zones = availability_zones
         self.backup_retention_period = backup_retention_period
@@ -82,7 +80,7 @@ class DBCluster(TaggableRDSResource, EventMixin, BaseRDSModel):
     @property
     def endpoint(self):
         return "{}.cluster-xxxxxxxx.{}.rds.amazonaws.com".format(
-            self.resource_id, self.backend.region
+            self.resource_id, self.backend.region_name
         )
 
     @property
@@ -185,9 +183,8 @@ class DBCluster(TaggableRDSResource, EventMixin, BaseRDSModel):
                 setattr(self, key, value)
 
 
-class DBClusterBackend(BaseRDSBackend):
+class DBClusterBackend:
     def __init__(self):
-        super(DBClusterBackend, self).__init__()
         self.db_clusters = OrderedDict()
 
     def get_db_cluster(self, db_cluster_identifier):
@@ -207,19 +204,14 @@ class DBClusterBackend(BaseRDSBackend):
         )
         return cluster
 
-    def delete_db_cluster(
-        self,
-        db_cluster_identifier,
-        skip_final_snapshot=False,
-        final_db_snapshot_identifier=None,
-    ):
+    def delete_db_cluster(self, db_cluster_identifier, **_):
         cluster = self.get_db_cluster(db_cluster_identifier)
         if cluster.members:
             raise DBClusterToBeDeletedHasActiveMembers()
         cluster.delete_events()
         return self.db_clusters.pop(db_cluster_identifier)
 
-    def describe_db_clusters(self, db_cluster_identifier=None, **kwargs):
+    def describe_db_clusters(self, db_cluster_identifier=None, **_):
         if db_cluster_identifier:
             return [self.get_db_cluster(db_cluster_identifier)]
         return self.db_clusters.values()

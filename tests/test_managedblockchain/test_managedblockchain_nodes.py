@@ -1,8 +1,6 @@
-from __future__ import unicode_literals
-
 import boto3
 import pytest
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 
 from botocore.exceptions import ClientError
 from moto import mock_managedblockchain
@@ -59,9 +57,7 @@ def test_create_node():
     )
 
     # Delete node
-    conn.delete_node(
-        NetworkId=network_id, MemberId=member_id, NodeId=node_id,
-    )
+    conn.delete_node(NetworkId=network_id, MemberId=member_id, NodeId=node_id)
 
     # Find node in full list
     response = conn.list_nodes(NetworkId=network_id, MemberId=member_id)
@@ -107,7 +103,7 @@ def test_create_node_standard_edition():
     logconfigbad = dict(helpers.default_nodeconfiguration)
     logconfigbad["InstanceType"] = "bc.t3.large"
     response = conn.create_node(
-        NetworkId=network_id, MemberId=member_id, NodeConfiguration=logconfigbad,
+        NetworkId=network_id, MemberId=member_id, NodeConfiguration=logconfigbad
     )
     node_id = response["NodeId"]
 
@@ -118,9 +114,7 @@ def test_create_node_standard_edition():
     # Need another member so the network does not get deleted
     # Create proposal
     response = conn.create_proposal(
-        NetworkId=network_id,
-        MemberId=member_id,
-        Actions=helpers.default_policy_actions,
+        NetworkId=network_id, MemberId=member_id, Actions=helpers.default_policy_actions
     )
     proposal_id = response["ProposalId"]
 
@@ -329,9 +323,7 @@ def test_list_nodes_badmember():
     network_id = response["NetworkId"]
 
     with pytest.raises(ClientError) as ex:
-        conn.list_nodes(
-            NetworkId=network_id, MemberId="m-ABCDEFGHIJKLMNOP0123456789",
-        )
+        conn.list_nodes(NetworkId=network_id, MemberId="m-ABCDEFGHIJKLMNOP0123456789")
     err = ex.value.response["Error"]
     err["Code"].should.equal("ResourceNotFoundException")
     err["Message"].should.contain("Member m-ABCDEFGHIJKLMNOP0123456789 not found")

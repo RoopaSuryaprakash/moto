@@ -1,8 +1,6 @@
-from __future__ import unicode_literals
-
-from moto.compat import OrderedDict
-from moto.core.utils import get_random_hex
-from .base import BaseRDSBackend, BaseRDSModel
+from collections import OrderedDict
+from moto.moto_api._internal import mock_random
+from .base import BaseRDSModel
 from .tag import TaggableRDSResource
 from ..exceptions import DBSubnetGroupNotFound
 from .. import utils
@@ -13,7 +11,7 @@ class DBSubnetGroup(TaggableRDSResource, BaseRDSModel):
     resource_type = "subgrp"
 
     def __init__(self, backend, subnet_name, description, subnets, tags=None):
-        super(DBSubnetGroup, self).__init__(backend)
+        super().__init__(backend)
         self.db_subnet_group_name = subnet_name
         self.db_subnet_group_description = description
         self.subnet_group_status = "Complete"
@@ -47,7 +45,9 @@ class DBSubnetGroup(TaggableRDSResource, BaseRDSModel):
     ):
         properties = cloudformation_json["Properties"]
         if "DBSubnetGroupName" not in properties:
-            properties["DBSubnetGroupName"] = resource_name.lower() + get_random_hex(12)
+            properties[
+                "DBSubnetGroupName"
+            ] = resource_name.lower() + mock_random.get_random_hex(12)
         backend = cls.get_regional_backend(region_name)
         params = utils.parse_cf_properties("CreateDBSubnetGroup", properties)
         subnet_group = backend.create_db_subnet_group(**params)
@@ -57,9 +57,8 @@ class DBSubnetGroup(TaggableRDSResource, BaseRDSModel):
         self.backend.delete_subnet_group(self.db_subnet_group_name)
 
 
-class DBSubnetGroupBackend(BaseRDSBackend):
+class DBSubnetGroupBackend:
     def __init__(self):
-        super(DBSubnetGroupBackend, self).__init__()
         self.db_subnet_groups = OrderedDict()
 
     def get_db_subnet_group(self, db_subnet_group_name):

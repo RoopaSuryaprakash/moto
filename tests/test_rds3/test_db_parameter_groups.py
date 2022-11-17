@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import boto3
 from botocore.exceptions import ClientError
 from sure import this
@@ -205,8 +203,14 @@ def test_delete_non_existent_db_parameter_group():
 @mock_rds
 def test_create_parameter_group_with_tags():
     test_tags = [
-        {"Key": "foo", "Value": "bar",},
-        {"Key": "foo1", "Value": "bar1",},
+        {
+            "Key": "foo",
+            "Value": "bar",
+        },
+        {
+            "Key": "foo1",
+            "Value": "bar1",
+        },
     ]
     conn = boto3.client("rds", region_name="us-west-2")
     conn.create_db_parameter_group(

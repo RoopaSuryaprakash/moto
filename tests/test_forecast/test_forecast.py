@@ -1,11 +1,9 @@
-from __future__ import unicode_literals
-
 import boto3
 import pytest
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 from botocore.exceptions import ClientError
 from moto import mock_forecast
-from moto.core import ACCOUNT_ID
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 
 region = "us-east-1"
 account_id = None
@@ -78,8 +76,8 @@ def test_forecast_dataset_group_create_duplicate_fails():
 def test_forecast_dataset_group_list_default_empty():
     client = boto3.client("forecast", region_name=region)
 
-    list = client.list_dataset_groups()
-    list["DatasetGroups"].should.be.empty
+    resp = client.list_dataset_groups()
+    resp["DatasetGroups"].should.equal([])
 
 
 @mock_forecast

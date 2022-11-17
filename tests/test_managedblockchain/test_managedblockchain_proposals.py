@@ -1,8 +1,6 @@
-from __future__ import unicode_literals
-
 import boto3
 import pytest
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 
 from botocore.exceptions import ClientError
 from moto import mock_managedblockchain
@@ -29,9 +27,7 @@ def test_create_proposal():
 
     # Create proposal
     response = conn.create_proposal(
-        NetworkId=network_id,
-        MemberId=member_id,
-        Actions=helpers.default_policy_actions,
+        NetworkId=network_id, MemberId=member_id, Actions=helpers.default_policy_actions
     )
     proposal_id = response["ProposalId"]
     proposal_id.should.match("p-[A-Z0-9]{26}")
@@ -141,9 +137,7 @@ def test_create_proposal_badinvitationacctid():
     member_id = response["MemberId"]
 
     with pytest.raises(ClientError) as ex:
-        conn.create_proposal(
-            NetworkId=network_id, MemberId=member_id, Actions=actions,
-        )
+        conn.create_proposal(NetworkId=network_id, MemberId=member_id, Actions=actions)
     err = ex.value.response["Error"]
     err["Code"].should.equal("InvalidRequestException")
     err["Message"].should.contain(
@@ -171,9 +165,7 @@ def test_create_proposal_badremovalmemid():
     member_id = response["MemberId"]
 
     with pytest.raises(ClientError) as ex:
-        conn.create_proposal(
-            NetworkId=network_id, MemberId=member_id, Actions=actions,
-        )
+        conn.create_proposal(NetworkId=network_id, MemberId=member_id, Actions=actions)
     err = ex.value.response["Error"]
     err["Code"].should.equal("InvalidRequestException")
     err["Message"].should.contain("Member ID format specified in proposal is not valid")
@@ -184,7 +176,7 @@ def test_list_proposal_badnetwork():
     conn = boto3.client("managedblockchain", region_name="us-east-1")
 
     with pytest.raises(ClientError) as ex:
-        conn.list_proposals(NetworkId="n-ABCDEFGHIJKLMNOP0123456789",)
+        conn.list_proposals(NetworkId="n-ABCDEFGHIJKLMNOP0123456789")
     err = ex.value.response["Error"]
     err["Code"].should.equal("ResourceNotFoundException")
     err["Message"].should.contain("Network n-ABCDEFGHIJKLMNOP0123456789 not found")
@@ -221,7 +213,7 @@ def test_get_proposal_badproposal():
 
     with pytest.raises(ClientError) as ex:
         conn.get_proposal(
-            NetworkId=network_id, ProposalId="p-ABCDEFGHIJKLMNOP0123456789",
+            NetworkId=network_id, ProposalId="p-ABCDEFGHIJKLMNOP0123456789"
         )
     err = ex.value.response["Error"]
     err["Code"].should.equal("ResourceNotFoundException")

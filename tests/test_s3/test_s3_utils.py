@@ -1,4 +1,3 @@
-from __future__ import unicode_literals
 import pytest
 from sure import expect
 from moto.s3.utils import (
@@ -8,7 +7,7 @@ from moto.s3.utils import (
     clean_key_name,
     undo_clean_key_name,
 )
-from tests.compat import patch
+from unittest.mock import patch
 
 
 def test_base_url():
@@ -25,7 +24,7 @@ def test_localhost_without_bucket():
     expect(bucket_name_from_url("https://www.localhost:5000/def")).should.equal(None)
 
 
-def test_force_ignore_subdomain_for_bucketnames(monkeypatch):
+def test_force_ignore_subdomain_for_bucketnames():
     with patch("moto.s3.utils.S3_IGNORE_SUBDOMAIN_BUCKETNAME", True):
         expect(
             bucket_name_from_url("https://subdomain.localhost:5000/abc/resource")

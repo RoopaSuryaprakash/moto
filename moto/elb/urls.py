@@ -1,5 +1,4 @@
-from __future__ import unicode_literals
-from six.moves.urllib.parse import parse_qs
+from urllib.parse import parse_qs
 from botocore.awsrequest import AWSPreparedRequest
 
 from moto.elb.responses import ELBResponse
@@ -32,9 +31,9 @@ def api_version_elb_backend(*args, **kwargs):
     elif "2015-12-01" == version:
         return ELBV2Response.dispatch(*args, **kwargs)
     else:
-        raise Exception("Unknown ELB API version: {}".format(version))
+        raise Exception(f"Unknown ELB API version: {version}")
 
 
-url_bases = ["https?://elasticloadbalancing.(.+).amazonaws.com"]
+url_bases = [r"https?://elasticloadbalancing\.(.+)\.amazonaws.com"]
 
 url_paths = {"{0}/$": api_version_elb_backend}

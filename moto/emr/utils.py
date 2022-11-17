@@ -1,32 +1,29 @@
-from __future__ import unicode_literals
 import copy
 import datetime
-import random
 import re
 import string
 from moto.core.utils import (
     camelcase_to_underscores,
     iso_8601_datetime_with_milliseconds,
 )
-
-import six
+from moto.moto_api._internal import mock_random as random
 
 
 def random_id(size=13):
     chars = list(range(10)) + list(string.ascii_uppercase)
-    return "".join(six.text_type(random.choice(chars)) for x in range(size))
+    return "".join(str(random.choice(chars)) for x in range(size))
 
 
-def random_cluster_id(size=13):
-    return "j-{0}".format(random_id())
+def random_cluster_id():
+    return f"j-{random_id()}"
 
 
-def random_step_id(size=13):
-    return "s-{0}".format(random_id())
+def random_step_id():
+    return f"s-{random_id()}"
 
 
-def random_instance_group_id(size=13):
-    return "i-{0}".format(random_id())
+def random_instance_group_id():
+    return f"i-{random_id()}"
 
 
 def steps_from_query_string(querystring_dict):
@@ -166,11 +163,11 @@ class ReleaseLabel(object):
     @classmethod
     def parse(cls, release_label):
         if not release_label:
-            raise ValueError("Invalid empty ReleaseLabel: %r" % release_label)
+            raise ValueError(f"Invalid empty ReleaseLabel: {release_label}")
 
         match = cls.version_re.match(release_label)
         if not match:
-            raise ValueError("Invalid ReleaseLabel: %r" % release_label)
+            raise ValueError(f"Invalid ReleaseLabel: {release_label}")
 
         major, minor, patch = match.groups()
 
@@ -181,11 +178,11 @@ class ReleaseLabel(object):
         return major, minor, patch
 
     def __str__(self):
-        version = "emr-%d.%d.%d" % (self.major, self.minor, self.patch)
+        version = f"emr-{self.major}.{self.minor}.{self.patch}"
         return version
 
     def __repr__(self):
-        return "%s(%r)" % (self.__class__.__name__, str(self))
+        return f"{self.__class__.__name__}({str(self)})"
 
     def __iter__(self):
         return iter((self.major, self.minor, self.patch))
@@ -270,7 +267,7 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "-1",
             "ip_ranges": [{"CidrIp": "0.0.0.0/0"}],
             "to_port": None,
-            "source_group_ids": [],
+            "source_groups": [],
         },
         {
             "group_name_or_id": EmrManagedSecurityGroup.Kind.SLAVE,
@@ -278,7 +275,7 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "-1",
             "ip_ranges": [{"CidrIp": "0.0.0.0/0"}],
             "to_port": None,
-            "source_group_ids": [],
+            "source_groups": [],
         },
         {
             "group_name_or_id": EmrManagedSecurityGroup.Kind.SERVICE,
@@ -286,9 +283,9 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "tcp",
             "ip_ranges": [],
             "to_port": 8443,
-            "source_group_ids": [
-                EmrManagedSecurityGroup.Kind.MASTER,
-                EmrManagedSecurityGroup.Kind.SLAVE,
+            "source_groups": [
+                {"GroupId": EmrManagedSecurityGroup.Kind.MASTER},
+                {"GroupId": EmrManagedSecurityGroup.Kind.SLAVE},
             ],
         },
     ]
@@ -300,9 +297,9 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "tcp",
             "ip_ranges": [],
             "to_port": 65535,
-            "source_group_ids": [
-                EmrManagedSecurityGroup.Kind.MASTER,
-                EmrManagedSecurityGroup.Kind.SLAVE,
+            "source_groups": [
+                {"GroupId": EmrManagedSecurityGroup.Kind.MASTER},
+                {"GroupId": EmrManagedSecurityGroup.Kind.SLAVE},
             ],
         },
         {
@@ -311,7 +308,7 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "tcp",
             "ip_ranges": [],
             "to_port": 8443,
-            "source_group_ids": [EmrManagedSecurityGroup.Kind.SERVICE],
+            "source_groups": [{"GroupId": EmrManagedSecurityGroup.Kind.SERVICE}],
         },
         {
             "group_name_or_id": EmrManagedSecurityGroup.Kind.MASTER,
@@ -319,9 +316,9 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "udp",
             "ip_ranges": [],
             "to_port": 65535,
-            "source_group_ids": [
-                EmrManagedSecurityGroup.Kind.MASTER,
-                EmrManagedSecurityGroup.Kind.SLAVE,
+            "source_groups": [
+                {"GroupId": EmrManagedSecurityGroup.Kind.MASTER},
+                {"GroupId": EmrManagedSecurityGroup.Kind.SLAVE},
             ],
         },
         {
@@ -330,9 +327,9 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "icmp",
             "ip_ranges": [],
             "to_port": -1,
-            "source_group_ids": [
-                EmrManagedSecurityGroup.Kind.MASTER,
-                EmrManagedSecurityGroup.Kind.SLAVE,
+            "source_groups": [
+                {"GroupId": EmrManagedSecurityGroup.Kind.MASTER},
+                {"GroupId": EmrManagedSecurityGroup.Kind.SLAVE},
             ],
         },
         {
@@ -341,9 +338,9 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "tcp",
             "ip_ranges": [],
             "to_port": 65535,
-            "source_group_ids": [
-                EmrManagedSecurityGroup.Kind.SLAVE,
-                EmrManagedSecurityGroup.Kind.MASTER,
+            "source_groups": [
+                {"GroupId": EmrManagedSecurityGroup.Kind.MASTER},
+                {"GroupId": EmrManagedSecurityGroup.Kind.SLAVE},
             ],
         },
         {
@@ -352,7 +349,7 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "tcp",
             "ip_ranges": [],
             "to_port": 8443,
-            "source_group_ids": [EmrManagedSecurityGroup.Kind.SERVICE],
+            "source_groups": [{"GroupId": EmrManagedSecurityGroup.Kind.SERVICE}],
         },
         {
             "group_name_or_id": EmrManagedSecurityGroup.Kind.SLAVE,
@@ -360,9 +357,9 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "udp",
             "ip_ranges": [],
             "to_port": 65535,
-            "source_group_ids": [
-                EmrManagedSecurityGroup.Kind.MASTER,
-                EmrManagedSecurityGroup.Kind.SLAVE,
+            "source_groups": [
+                {"GroupId": EmrManagedSecurityGroup.Kind.MASTER},
+                {"GroupId": EmrManagedSecurityGroup.Kind.SLAVE},
             ],
         },
         {
@@ -371,9 +368,9 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "icmp",
             "ip_ranges": [],
             "to_port": -1,
-            "source_group_ids": [
-                EmrManagedSecurityGroup.Kind.MASTER,
-                EmrManagedSecurityGroup.Kind.SLAVE,
+            "source_groups": [
+                {"GroupId": EmrManagedSecurityGroup.Kind.MASTER},
+                {"GroupId": EmrManagedSecurityGroup.Kind.SLAVE},
             ],
         },
         {
@@ -382,7 +379,7 @@ class EmrSecurityGroupManager(object):
             "ip_protocol": "tcp",
             "ip_ranges": [],
             "to_port": 9443,
-            "source_group_ids": [EmrManagedSecurityGroup.Kind.MASTER],
+            "source_groups": [{"GroupId": EmrManagedSecurityGroup.Kind.MASTER}],
         },
     ]
 
@@ -428,7 +425,7 @@ class EmrSecurityGroupManager(object):
         if group is None:
             if group_id_or_name != defaults.group_name:
                 raise ValueError(
-                    "The security group '{}' does not exist".format(group_id_or_name)
+                    f"The security group '{group_id_or_name}' does not exist"
                 )
             group = create_sg(defaults.group_name, defaults.description(), self.vpc_id)
         return group
@@ -454,7 +451,8 @@ class EmrSecurityGroupManager(object):
         rendered_rules = copy.deepcopy(rules)
         for rule in rendered_rules:
             rule["group_name_or_id"] = managed_groups[rule["group_name_or_id"]].id
-            rule["source_group_ids"] = [
-                managed_groups[group].id for group in rule["source_group_ids"]
+            rule["source_groups"] = [
+                {"GroupId": managed_groups[group.get("GroupId")].id}
+                for group in rule["source_groups"]
             ]
         return rendered_rules

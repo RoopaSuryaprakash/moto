@@ -1,8 +1,7 @@
-from __future__ import unicode_literals
-
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 import re
 import pytest
+import json
 import boto3
 from botocore.client import ClientError
 
@@ -12,6 +11,7 @@ import pytz
 from freezegun import freeze_time
 
 from moto import mock_glue, settings
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 from . import helpers
 
 
@@ -23,8 +23,9 @@ FROZEN_CREATE_TIME = datetime(2015, 1, 1, 0, 0, 0)
 def test_create_database():
     client = boto3.client("glue", region_name="us-east-1")
     database_name = "myspecialdatabase"
+    database_catalog_id = ACCOUNT_ID
     database_input = helpers.create_database_input(database_name)
-    helpers.create_database(client, database_name, database_input)
+    helpers.create_database(client, database_name, database_input, database_catalog_id)
 
     response = helpers.get_database(client, database_name)
     database = response["Database"]
@@ -39,7 +40,7 @@ def test_create_database():
         database_input.get("CreateTableDefaultPermissions")
     )
     database.get("TargetDatabase").should.equal(database_input.get("TargetDatabase"))
-    database.get("CatalogId").should.equal(database_input.get("CatalogId"))
+    database.get("CatalogId").should.equal(database_catalog_id)
 
 
 @mock_glue
@@ -92,6 +93,76 @@ def test_get_databases_several_items():
 
 
 @mock_glue
+def test_update_database():
+    client = boto3.client("glue", region_name="us-east-1")
+    database_name = "existingdatabase"
+    database_catalog_id = ACCOUNT_ID
+    helpers.create_database(
+        client, database_name, {"Name": database_name}, database_catalog_id
+    )
+
+    response = helpers.get_database(client, database_name)
+    database = response["Database"]
+    database.get("CatalogId").should.equal(database_catalog_id)
+    database.get("Description").should.be.none
+    database.get("LocationUri").should.be.none
+
+    database_input = {
+        "Name": database_name,
+        "Description": "desc",
+        "LocationUri": "s3://bucket/existingdatabase/",
+    }
+    client.update_database(
+        CatalogId=database_catalog_id, Name=database_name, DatabaseInput=database_input
+    )
+
+    response = helpers.get_database(client, database_name)
+    database = response["Database"]
+    database.get("CatalogId").should.equal(database_catalog_id)
+    database.get("Description").should.equal("desc")
+    database.get("LocationUri").should.equal("s3://bucket/existingdatabase/")
+
+
+@mock_glue
+def test_update_unknown_database():
+    client = boto3.client("glue", region_name="us-east-1")
+
+    with pytest.raises(ClientError) as exc:
+        client.update_database(Name="x", DatabaseInput={"Name": "x"})
+    err = exc.value.response["Error"]
+    err["Code"].should.equal("EntityNotFoundException")
+    err["Message"].should.equal("Database x not found.")
+
+
+@mock_glue
+def test_delete_database():
+    client = boto3.client("glue", region_name="us-east-1")
+    database_name_1, database_name_2 = "firstdatabase", "seconddatabase"
+
+    helpers.create_database(client, database_name_1, {"Name": database_name_1})
+    helpers.create_database(client, database_name_2, {"Name": database_name_2})
+
+    client.delete_database(Name=database_name_1)
+
+    database_list = sorted(
+        client.get_databases()["DatabaseList"], key=lambda x: x["Name"]
+    )
+    [db["Name"] for db in database_list].should.equal([database_name_2])
+
+
+@mock_glue
+def test_delete_unknown_database():
+    client = boto3.client("glue", region_name="us-east-1")
+
+    with pytest.raises(ClientError) as exc:
+        client.delete_database(Name="x")
+    err = exc.value.response["Error"]
+    err["Code"].should.equal("EntityNotFoundException")
+    err["Message"].should.equal("Database x not found.")
+
+
+@mock_glue
+@freeze_time(FROZEN_CREATE_TIME)
 def test_create_table():
     client = boto3.client("glue", region_name="us-east-1")
     database_name = "myspecialdatabase"
@@ -103,6 +174,9 @@ def test_create_table():
 
     response = helpers.get_table(client, database_name, table_name)
     table = response["Table"]
+
+    if not settings.TEST_SERVER_MODE:
+        table["CreateTime"].should.equal(FROZEN_CREATE_TIME)
 
     table["Name"].should.equal(table_input["Name"])
     table["StorageDescriptor"].should.equal(table_input["StorageDescriptor"])
@@ -151,6 +225,84 @@ def test_get_tables():
             table_inputs[table_name]["StorageDescriptor"]
         )
         table["PartitionKeys"].should.equal(table_inputs[table_name]["PartitionKeys"])
+
+
+@mock_glue
+def test_get_tables_expression():
+    client = boto3.client("glue", region_name="us-east-1")
+    database_name = "myspecialdatabase"
+    helpers.create_database(client, database_name)
+
+    table_names = [
+        "mytableprefix_123",
+        "mytableprefix_something_test",
+        "something_mytablepostfix",
+        "test_catchthis123_test",
+        "asduas6781catchthisasdas",
+        "fakecatchthisfake",
+        "trailingtest.",
+        "trailingtest...",
+    ]
+    table_inputs = {}
+
+    for table_name in table_names:
+        table_input = helpers.create_table_input(database_name, table_name)
+        table_inputs[table_name] = table_input
+        helpers.create_table(client, database_name, table_name, table_input)
+
+    prefix_expression = "mytableprefix_\\w+"
+    postfix_expression = "\\w+_mytablepostfix"
+    string_expression = "\\w+catchthis\\w+"
+
+    # even though * is an invalid regex, sadly glue api treats it as a glob-like wildcard
+    star_expression1 = "*"
+    star_expression2 = "mytable*"
+    star_expression3 = "*table*"
+    star_expression4 = "*catch*is*"
+    star_expression5 = ".*catch*is*"
+    star_expression6 = "trailing*.*"
+
+    response_prefix = helpers.get_tables(client, database_name, prefix_expression)
+    response_postfix = helpers.get_tables(client, database_name, postfix_expression)
+    response_string_match = helpers.get_tables(client, database_name, string_expression)
+    response_star_expression1 = helpers.get_tables(
+        client, database_name, star_expression1
+    )
+    response_star_expression2 = helpers.get_tables(
+        client, database_name, star_expression2
+    )
+    response_star_expression3 = helpers.get_tables(
+        client, database_name, star_expression3
+    )
+    response_star_expression4 = helpers.get_tables(
+        client, database_name, star_expression4
+    )
+    response_star_expression5 = helpers.get_tables(
+        client, database_name, star_expression5
+    )
+    response_star_expression6 = helpers.get_tables(
+        client, database_name, star_expression6
+    )
+
+    tables_prefix = response_prefix["TableList"]
+    tables_postfix = response_postfix["TableList"]
+    tables_string_match = response_string_match["TableList"]
+    tables_star_expression1 = response_star_expression1["TableList"]
+    tables_star_expression2 = response_star_expression2["TableList"]
+    tables_star_expression3 = response_star_expression3["TableList"]
+    tables_star_expression4 = response_star_expression4["TableList"]
+    tables_star_expression5 = response_star_expression5["TableList"]
+    tables_star_expression6 = response_star_expression6["TableList"]
+
+    tables_prefix.should.have.length_of(2)
+    tables_postfix.should.have.length_of(1)
+    tables_string_match.should.have.length_of(3)
+    tables_star_expression1.should.have.length_of(8)
+    tables_star_expression2.should.have.length_of(2)
+    tables_star_expression3.should.have.length_of(3)
+    tables_star_expression4.should.have.length_of(3)
+    tables_star_expression5.should.have.length_of(3)
+    tables_star_expression6.should.have.length_of(2)
 
 
 @mock_glue
@@ -716,7 +868,7 @@ def test_batch_update_partition():
         )
 
     response = client.batch_update_partition(
-        DatabaseName=database_name, TableName=table_name, Entries=batch_update_values,
+        DatabaseName=database_name, TableName=table_name, Entries=batch_update_values
     )
 
     for value in values:
@@ -784,7 +936,7 @@ def test_batch_update_partition_missing_partition():
     )
 
     response = client.batch_update_partition(
-        DatabaseName=database_name, TableName=table_name, Entries=batch_update_values,
+        DatabaseName=database_name, TableName=table_name, Entries=batch_update_values
     )
 
     response.should.have.key("Errors")
@@ -812,7 +964,7 @@ def test_delete_partition():
 
     response = client.get_partitions(DatabaseName=database_name, TableName=table_name)
     partitions = response["Partitions"]
-    partitions.should.be.empty
+    partitions.should.equal([])
 
 
 @mock_glue
@@ -905,3 +1057,301 @@ def test_batch_delete_partition_with_bad_partitions():
     ["2018-11-01"].should.be.within(error_partitions)
     ["2018-11-02"].should.be.within(error_partitions)
     ["2018-11-03"].should.be.within(error_partitions)
+
+
+@mock_glue
+@freeze_time(FROZEN_CREATE_TIME)
+def test_create_crawler_scheduled():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+    role = "arn:aws:iam::123456789012:role/Glue/Role"
+    database_name = "my_database_name"
+    description = "my crawler description"
+    targets = {
+        "S3Targets": [{"Path": "s3://my-source-bucket/"}],
+        "JdbcTargets": [],
+        "MongoDBTargets": [],
+        "DynamoDBTargets": [],
+        "CatalogTargets": [],
+    }
+    schedule = "cron(15 12 * * ? *)"
+    classifiers = []
+    table_prefix = "my_table_prefix_"
+    schema_change_policy = {
+        "UpdateBehavior": "LOG",
+        "DeleteBehavior": "LOG",
+    }
+    recrawl_policy = {"RecrawlBehavior": "CRAWL_NEW_FOLDERS_ONLY"}
+    lineage_configuration = {"CrawlerLineageSettings": "DISABLE"}
+    configuration = json.dumps(
+        {
+            "Version": 1.0,
+            "CrawlerOutput": {
+                "Partitions": {"AddOrUpdateBehavior": "InheritFromTable"},
+            },
+            "Grouping": {"TableGroupingPolicy": "CombineCompatibleSchemas"},
+        }
+    )
+    crawler_security_configuration = "my_security_configuration"
+    tags = {"tag_key": "tag_value"}
+    helpers.create_crawler(
+        client,
+        name,
+        role,
+        targets,
+        database_name=database_name,
+        description=description,
+        schedule=schedule,
+        classifiers=classifiers,
+        table_prefix=table_prefix,
+        schema_change_policy=schema_change_policy,
+        recrawl_policy=recrawl_policy,
+        lineage_configuration=lineage_configuration,
+        configuration=configuration,
+        crawler_security_configuration=crawler_security_configuration,
+        tags=tags,
+    )
+
+    response = client.get_crawler(Name=name)
+    crawler = response["Crawler"]
+
+    crawler.get("Name").should.equal(name)
+    crawler.get("Role").should.equal(role)
+    crawler.get("DatabaseName").should.equal(database_name)
+    crawler.get("Description").should.equal(description)
+    crawler.get("Targets").should.equal(targets)
+    crawler.get("Schedule").should.equal(
+        {"ScheduleExpression": schedule, "State": "SCHEDULED"}
+    )
+    crawler.get("Classifiers").should.equal(classifiers)
+    crawler.get("TablePrefix").should.equal(table_prefix)
+    crawler.get("SchemaChangePolicy").should.equal(schema_change_policy)
+    crawler.get("RecrawlPolicy").should.equal(recrawl_policy)
+    crawler.get("LineageConfiguration").should.equal(lineage_configuration)
+    crawler.get("Configuration").should.equal(configuration)
+    crawler.get("CrawlerSecurityConfiguration").should.equal(
+        crawler_security_configuration
+    )
+
+    crawler.get("State").should.equal("READY")
+    crawler.get("CrawlElapsedTime").should.equal(0)
+    crawler.get("Version").should.equal(1)
+    if not settings.TEST_SERVER_MODE:
+        crawler.get("CreationTime").should.equal(FROZEN_CREATE_TIME)
+        crawler.get("LastUpdated").should.equal(FROZEN_CREATE_TIME)
+
+    crawler.should.not_have.key("LastCrawl")
+
+
+@mock_glue
+@freeze_time(FROZEN_CREATE_TIME)
+def test_create_crawler_unscheduled():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+    role = "arn:aws:iam::123456789012:role/Glue/Role"
+    database_name = "my_database_name"
+    description = "my crawler description"
+    targets = {
+        "S3Targets": [{"Path": "s3://my-source-bucket/"}],
+        "JdbcTargets": [],
+        "MongoDBTargets": [],
+        "DynamoDBTargets": [],
+        "CatalogTargets": [],
+    }
+    classifiers = []
+    table_prefix = "my_table_prefix_"
+    schema_change_policy = {
+        "UpdateBehavior": "LOG",
+        "DeleteBehavior": "LOG",
+    }
+    recrawl_policy = {"RecrawlBehavior": "CRAWL_NEW_FOLDERS_ONLY"}
+    lineage_configuration = {"CrawlerLineageSettings": "DISABLE"}
+    configuration = json.dumps(
+        {
+            "Version": 1.0,
+            "CrawlerOutput": {
+                "Partitions": {"AddOrUpdateBehavior": "InheritFromTable"},
+            },
+            "Grouping": {"TableGroupingPolicy": "CombineCompatibleSchemas"},
+        }
+    )
+    crawler_security_configuration = "my_security_configuration"
+    tags = {"tag_key": "tag_value"}
+    helpers.create_crawler(
+        client,
+        name,
+        role,
+        targets,
+        database_name=database_name,
+        description=description,
+        classifiers=classifiers,
+        table_prefix=table_prefix,
+        schema_change_policy=schema_change_policy,
+        recrawl_policy=recrawl_policy,
+        lineage_configuration=lineage_configuration,
+        configuration=configuration,
+        crawler_security_configuration=crawler_security_configuration,
+        tags=tags,
+    )
+
+    response = client.get_crawler(Name=name)
+    crawler = response["Crawler"]
+
+    crawler.get("Name").should.equal(name)
+    crawler.get("Role").should.equal(role)
+    crawler.get("DatabaseName").should.equal(database_name)
+    crawler.get("Description").should.equal(description)
+    crawler.get("Targets").should.equal(targets)
+    crawler.should.not_have.key("Schedule")
+    crawler.get("Classifiers").should.equal(classifiers)
+    crawler.get("TablePrefix").should.equal(table_prefix)
+    crawler.get("SchemaChangePolicy").should.equal(schema_change_policy)
+    crawler.get("RecrawlPolicy").should.equal(recrawl_policy)
+    crawler.get("LineageConfiguration").should.equal(lineage_configuration)
+    crawler.get("Configuration").should.equal(configuration)
+    crawler.get("CrawlerSecurityConfiguration").should.equal(
+        crawler_security_configuration
+    )
+
+    crawler.get("State").should.equal("READY")
+    crawler.get("CrawlElapsedTime").should.equal(0)
+    crawler.get("Version").should.equal(1)
+    if not settings.TEST_SERVER_MODE:
+        crawler.get("CreationTime").should.equal(FROZEN_CREATE_TIME)
+        crawler.get("LastUpdated").should.equal(FROZEN_CREATE_TIME)
+
+    crawler.should.not_have.key("LastCrawl")
+
+
+@mock_glue
+def test_create_crawler_already_exists():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+    helpers.create_crawler(client, name)
+
+    with pytest.raises(ClientError) as exc:
+        helpers.create_crawler(client, name)
+
+    exc.value.response["Error"]["Code"].should.equal("AlreadyExistsException")
+
+
+@mock_glue
+def test_get_crawler_not_exits():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+
+    with pytest.raises(ClientError) as exc:
+        client.get_crawler(Name=name)
+
+    exc.value.response["Error"]["Code"].should.equal("EntityNotFoundException")
+    exc.value.response["Error"]["Message"].should.match(
+        "Crawler my_crawler_name not found"
+    )
+
+
+@mock_glue
+def test_get_crawlers_empty():
+    client = boto3.client("glue", region_name="us-east-1")
+    response = client.get_crawlers()
+    response["Crawlers"].should.have.length_of(0)
+
+
+@mock_glue
+def test_get_crawlers_several_items():
+    client = boto3.client("glue", region_name="us-east-1")
+    name_1, name_2 = "my_crawler_name_1", "my_crawler_name_2"
+
+    helpers.create_crawler(client, name_1)
+    helpers.create_crawler(client, name_2)
+
+    crawlers = sorted(client.get_crawlers()["Crawlers"], key=lambda x: x["Name"])
+    crawlers.should.have.length_of(2)
+    crawlers[0].get("Name").should.equal(name_1)
+    crawlers[1].get("Name").should.equal(name_2)
+
+
+@mock_glue
+def test_start_crawler():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+    helpers.create_crawler(client, name)
+
+    client.start_crawler(Name=name)
+
+    response = client.get_crawler(Name=name)
+    crawler = response["Crawler"]
+
+    crawler.get("State").should.equal("RUNNING")
+
+
+@mock_glue
+def test_start_crawler_should_raise_exception_if_already_running():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+    helpers.create_crawler(client, name)
+
+    client.start_crawler(Name=name)
+    with pytest.raises(ClientError) as exc:
+        client.start_crawler(Name=name)
+
+    exc.value.response["Error"]["Code"].should.equal("CrawlerRunningException")
+
+
+@mock_glue
+def test_stop_crawler():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+    helpers.create_crawler(client, name)
+    client.start_crawler(Name=name)
+
+    client.stop_crawler(Name=name)
+
+    response = client.get_crawler(Name=name)
+    crawler = response["Crawler"]
+
+    crawler.get("State").should.equal("STOPPING")
+
+
+@mock_glue
+def test_stop_crawler_should_raise_exception_if_not_running():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+    helpers.create_crawler(client, name)
+
+    with pytest.raises(ClientError) as exc:
+        client.stop_crawler(Name=name)
+
+    exc.value.response["Error"]["Code"].should.equal("CrawlerNotRunningException")
+
+
+@mock_glue
+def test_delete_crawler():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+    helpers.create_crawler(client, name)
+
+    result = client.delete_crawler(Name=name)
+    result["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
+
+    # confirm crawler is deleted
+    with pytest.raises(ClientError) as exc:
+        client.get_crawler(Name=name)
+
+    exc.value.response["Error"]["Code"].should.equal("EntityNotFoundException")
+    exc.value.response["Error"]["Message"].should.match(
+        "Crawler my_crawler_name not found"
+    )
+
+
+@mock_glue
+def test_delete_crawler_not_exists():
+    client = boto3.client("glue", region_name="us-east-1")
+    name = "my_crawler_name"
+
+    with pytest.raises(ClientError) as exc:
+        client.delete_crawler(Name=name)
+
+    exc.value.response["Error"]["Code"].should.equal("EntityNotFoundException")
+    exc.value.response["Error"]["Message"].should.match(
+        "Crawler my_crawler_name not found"
+    )

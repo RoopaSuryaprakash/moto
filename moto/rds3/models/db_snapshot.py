@@ -1,13 +1,11 @@
-from __future__ import unicode_literals
-
 import copy
 import datetime
 import string
 import os
 
-from moto.compat import OrderedDict
+from collections import OrderedDict
 from moto.core.utils import iso_8601_datetime_with_milliseconds
-from .base import BaseRDSBackend, BaseRDSModel
+from .base import BaseRDSModel
 from .event import EventMixin
 from .tag import TaggableRDSResource
 from ..exceptions import (
@@ -63,7 +61,7 @@ class DBSnapshot(TaggableRDSResource, EventMixin, BaseRDSModel):
         tags=None,
         kms_key_id=None,
     ):
-        super(DBSnapshot, self).__init__(backend)
+        super().__init__(backend)
         if snapshot_type == "manual":
             if not self._is_identifier_valid(identifier):
                 raise InvalidDBSnapshotIdentifierValue(identifier)
@@ -109,9 +107,8 @@ class DBSnapshot(TaggableRDSResource, EventMixin, BaseRDSModel):
         return self.created_at
 
 
-class DBSnapshotBackend(BaseRDSBackend):
+class DBSnapshotBackend:
     def __init__(self):
-        super(DBSnapshotBackend, self).__init__()
         self.db_snapshots = OrderedDict()
 
     def get_db_snapshot(self, db_snapshot_identifier):
@@ -179,7 +176,7 @@ class DBSnapshotBackend(BaseRDSBackend):
         db_instance_identifier=None,
         db_snapshot_identifier=None,
         snapshot_type=None,
-        **kwargs
+        **_
     ):
         if db_snapshot_identifier:
             return [self.get_db_snapshot(db_snapshot_identifier)]

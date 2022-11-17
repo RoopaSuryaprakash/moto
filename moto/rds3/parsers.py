@@ -1,4 +1,4 @@
-import six
+# pylint: disable=unused-argument
 from botocore import xform_name
 
 
@@ -62,7 +62,7 @@ class CloudFormationPropertiesParser(object):
     @staticmethod
     def _default_handle(shape, value):
         # If value is non-scalar, try to get the scalar from the object.
-        if value and not isinstance(value, six.string_types):
+        if value and not isinstance(value, str):
             value = getattr(value, "resource_id", value)
         return value
 
@@ -136,7 +136,7 @@ class QueryStringParametersParser(object):
         value = self._default_handle(shape, query_params, prefix)
         return int(value)
 
-    def _default_handle(self, shape, query_params, prefix=""):
+    def _default_handle(self, _, query_params, prefix=""):
         # urlparse parses all querystring values into lists.
         return query_params.get(prefix)[0]
 

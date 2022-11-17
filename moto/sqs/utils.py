@@ -1,7 +1,5 @@
-from __future__ import unicode_literals
-import random
 import string
-
+from moto.moto_api._internal import mock_random as random
 from .exceptions import MessageAttributesInvalid
 
 

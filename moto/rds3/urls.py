@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 from moto.rds3.responses import RDSResponse
 
 url_bases = [

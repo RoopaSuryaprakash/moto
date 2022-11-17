@@ -1,6 +1,7 @@
-from __future__ import unicode_literals
-
-from moto.rds3.utils import create_backends
+from moto.core import BackendDict, BaseBackend
+from moto.ec2 import ec2_backends
+from moto.iam import iam_backends
+from moto.kms import kms_backends
 from .db_cluster import DBCluster  # noqa: F401
 from .db_cluster import DBClusterBackend
 from .db_cluster_parameter_group import DBClusterParameterGroup  # noqa: F401
@@ -27,6 +28,7 @@ from .tag import TagBackend
 
 
 class RDS3Backend(
+    BaseBackend,
     DBClusterBackend,
     DBClusterParameterGroupBackend,
     DBClusterSnapshotBackend,
@@ -40,24 +42,51 @@ class RDS3Backend(
     OptionGroupBackend,
     TagBackend,
 ):
-    def __init__(self, region):
-        super(RDS3Backend, self).__init__()
-        self.region = region
+    def __init__(self, region_name, account_id):
+        BaseBackend.__init__(self, region_name, account_id)
+        for backend in RDS3Backend.__mro__:
+            if backend not in [RDS3Backend, BaseBackend, object]:
+                backend.__init__(self)
         # Create RDS Alias
         rds_key = self.kms.create_key(
             policy="",
             key_usage="ENCRYPT_DECRYPT",
-            customer_master_key_spec=None,
+            key_spec=None,
             description="Default master key that protects my RDS database volumes when no other key is defined",
             tags=None,
-            region=self.region,
         )
         self.kms.add_alias(rds_key.id, "alias/aws/rds")
 
-    def reset(self):
-        region = self.region
-        self.__dict__ = {}
-        self.__init__(region)
+    @property
+    def ec2(self):
+        """
+        :return: EC2 Backend
+        :rtype: moto.ec2.models.EC2Backend
+        """
+        return ec2_backends[self.account_id][self.region_name]
+
+    @property
+    def iam(self):
+        """
+        :return: IAM Backend
+        :rtype: moto.iam.models.IAMBackend
+        """
+        return iam_backends[self.account_id]["global"]
+
+    @property
+    def kms(self):
+        """
+        :return: KMS Backend
+        :rtype: moto.kms.models.KMSBackend
+        """
+        return kms_backends[self.account_id][self.region_name]
+
+    def get_regional_backend(self, region):
+        """
+        :return: RDS Backend
+        :rtype: moto.rds3.models.RDS3Backend
+        """
+        return rds3_backends[self.account_id][region]
 
 
-rds3_backends = create_backends("rds", RDS3Backend)
+rds3_backends = BackendDict(RDS3Backend, "rds")

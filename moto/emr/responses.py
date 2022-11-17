@@ -1,4 +1,3 @@
-from __future__ import unicode_literals
 import json
 import re
 from datetime import datetime
@@ -6,12 +5,12 @@ from functools import wraps
 
 import pytz
 
-from six.moves.urllib.parse import urlparse
+from urllib.parse import urlparse
 from moto.core.responses import AWSServiceSpec
 from moto.core.responses import BaseResponse
 from moto.core.responses import xml_to_json_response
 from moto.core.utils import tags_from_query_string
-from .exceptions import EmrError
+from .exceptions import ValidationException
 from .models import emr_backends
 from .utils import steps_from_query_string, Unflattener, ReleaseLabel
 
@@ -56,6 +55,9 @@ class ElasticMapReduceResponse(BaseResponse):
 
     aws_service_spec = AWSServiceSpec("data/emr/2009-03-31/service-2.json")
 
+    def __init__(self):
+        super().__init__(service_name="emr")
+
     def get_region_from_url(self, request, full_url):
         parsed = urlparse(full_url)
         for regex in self.region_regex:
@@ -66,7 +68,7 @@ class ElasticMapReduceResponse(BaseResponse):
 
     @property
     def backend(self):
-        return emr_backends[self.region]
+        return emr_backends[self.current_account][self.region]
 
     @generate_boto3_response("AddInstanceGroups")
     def add_instance_groups(self):
@@ -129,7 +131,7 @@ class ElasticMapReduceResponse(BaseResponse):
     @generate_boto3_response("DescribeCluster")
     def describe_cluster(self):
         cluster_id = self._get_param("ClusterId")
-        cluster = self.backend.get_cluster(cluster_id)
+        cluster = self.backend.describe_cluster(cluster_id)
         template = self.response_template(DESCRIBE_CLUSTER_TEMPLATE)
         return template.render(cluster=cluster)
 
@@ -277,6 +279,7 @@ class ElasticMapReduceResponse(BaseResponse):
             log_uri=self._get_param("LogUri"),
             job_flow_role=self._get_param("JobFlowRole"),
             service_role=self._get_param("ServiceRole"),
+            auto_scaling_role=self._get_param("AutoScalingRole"),
             steps=steps_from_query_string(self._get_list_prefix("Steps.member")),
             visible_to_all_users=self._get_bool_param("VisibleToAllUsers", False),
             instance_attrs=instance_attrs,
@@ -305,7 +308,7 @@ class ElasticMapReduceResponse(BaseResponse):
                         config.pop(key)
                 config["properties"] = {}
                 map_items = self._get_map_prefix(
-                    "Configurations.member.{0}.Properties.entry".format(idx)
+                    f"Configurations.member.{idx}.Properties.entry"
                 )
                 config["properties"] = map_items
 
@@ -320,11 +323,7 @@ class ElasticMapReduceResponse(BaseResponse):
                     "Only one AMI version and release label may be specified. "
                     "Provided AMI: {0}, release label: {1}."
                 ).format(ami_version, release_label)
-                raise EmrError(
-                    error_type="ValidationException",
-                    message=message,
-                    template="error_json",
-                )
+                raise ValidationException(message=message)
         else:
             if ami_version:
                 kwargs["requested_ami_version"] = ami_version
@@ -339,18 +338,10 @@ class ElasticMapReduceResponse(BaseResponse):
                 ReleaseLabel(release_label) < ReleaseLabel("emr-5.7.0")
             ):
                 message = "Custom AMI is not allowed"
-                raise EmrError(
-                    error_type="ValidationException",
-                    message=message,
-                    template="error_json",
-                )
+                raise ValidationException(message=message)
             elif ami_version:
                 message = "Custom AMI is not supported in this version of EMR"
-                raise EmrError(
-                    error_type="ValidationException",
-                    message=message,
-                    template="error_json",
-                )
+                raise ValidationException(message=message)
 
         step_concurrency_level = self._get_param("StepConcurrencyLevel")
         if step_concurrency_level:
@@ -448,7 +439,7 @@ class ElasticMapReduceResponse(BaseResponse):
             iops = "iops"
             volumes_per_instance = "volumes_per_instance"
 
-            key_ebs_optimized = "{0}._{1}".format(key_ebs_config, ebs_optimized)
+            key_ebs_optimized = f"{key_ebs_config}._{ebs_optimized}"
             # EbsOptimized config
             if key_ebs_optimized in ebs_configuration:
                 instance_group.pop(key_ebs_optimized)
@@ -459,12 +450,10 @@ class ElasticMapReduceResponse(BaseResponse):
             # Ebs Blocks
             ebs_blocks = []
             idx = 1
-            keyfmt = "{0}._{1}.member.{{}}".format(
-                key_ebs_config, ebs_block_device_configs
-            )
+            keyfmt = f"{key_ebs_config}._{ebs_block_device_configs}.member.{{}}"
             key = keyfmt.format(idx)
             while self._has_key_prefix(key, ebs_configuration):
-                vlespc_keyfmt = "{0}._{1}._{{}}".format(key, volume_specification)
+                vlespc_keyfmt = f"{key}._{volume_specification}._{{}}"
                 vol_size = vlespc_keyfmt.format(size_in_gb)
                 vol_iops = vlespc_keyfmt.format(iops)
                 vol_type = vlespc_keyfmt.format(volume_type)
@@ -487,7 +476,7 @@ class ElasticMapReduceResponse(BaseResponse):
                         volume_type
                     ] = ebs_configuration.pop(vol_type)
 
-                per_instance = "{0}._{1}".format(key, volumes_per_instance)
+                per_instance = f"{key}._{volumes_per_instance}"
                 if per_instance in ebs_configuration:
                     instance_group.pop(per_instance)
                     ebs_block[volumes_per_instance] = int(
@@ -529,7 +518,7 @@ class ElasticMapReduceResponse(BaseResponse):
     @generate_boto3_response("PutAutoScalingPolicy")
     def put_auto_scaling_policy(self):
         cluster_id = self._get_param("ClusterId")
-        cluster = self.backend.get_cluster(cluster_id)
+        cluster = self.backend.describe_cluster(cluster_id)
         instance_group_id = self._get_param("InstanceGroupId")
         auto_scaling_policy = self._get_param("AutoScalingPolicy")
         instance_group = self.backend.put_auto_scaling_policy(
@@ -544,7 +533,7 @@ class ElasticMapReduceResponse(BaseResponse):
     def remove_auto_scaling_policy(self):
         cluster_id = self._get_param("ClusterId")
         instance_group_id = self._get_param("InstanceGroupId")
-        instance_group = self.backend.put_auto_scaling_policy(instance_group_id, None)
+        instance_group = self.backend.remove_auto_scaling_policy(instance_group_id)
         template = self.response_template(REMOVE_AUTO_SCALING_POLICY)
         return template.render(cluster_id=cluster_id, instance_group=instance_group)
 
@@ -665,6 +654,7 @@ DESCRIBE_CLUSTER_TEMPLATE = """<DescribeClusterResponse xmlns="http://elasticmap
       <SecurityConfiguration>{{ cluster.security_configuration }}</SecurityConfiguration>
       {% endif %}
       <ServiceRole>{{ cluster.service_role }}</ServiceRole>
+      <AutoScalingRole>{{ cluster.auto_scaling_role }}</AutoScalingRole>
       <Status>
         <State>{{ cluster.state }}</State>
         <StateChangeReason>

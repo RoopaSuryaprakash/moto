@@ -1,14 +1,18 @@
-from __future__ import unicode_literals
-
-from botocore.exceptions import ClientError, ParamValidationError
+from botocore.exceptions import ClientError
 import boto3
 from sure import this  # noqa
-from . import mock_kms, mock_rds
+from . import mock_rds
 
 
 test_tags = [
-    {"Key": "foo", "Value": "bar",},
-    {"Key": "foo1", "Value": "bar1",},
+    {
+        "Key": "foo",
+        "Value": "bar",
+    },
+    {
+        "Key": "foo1",
+        "Value": "bar1",
+    },
 ]
 
 

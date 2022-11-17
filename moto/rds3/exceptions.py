@@ -1,6 +1,3 @@
-from __future__ import unicode_literals
-
-
 class RDSError(Exception):
 
     fmt = "An unspecified RDS error occurred."
@@ -13,7 +10,7 @@ class RDSError(Exception):
 
     def __init__(self, **kwargs):
         msg = self.fmt.format(**kwargs)
-        super(RDSError, self).__init__(msg)
+        super().__init__(msg)
         if self.code is None:
             self.code = self.__class__.__name__
 
@@ -27,9 +24,7 @@ class ResourceNotFound(RDSError):
 
     def __init__(self, resource_id):
         resource_type = self.__class__.__name__.replace("NotFound", "")
-        super(ResourceNotFound, self).__init__(
-            resource_id=resource_id, resource_type=resource_type
-        )
+        super().__init__(resource_id=resource_id, resource_type=resource_type)
         # self.code = self.__class__.__name__ + "Fault"
 
 
@@ -80,9 +75,7 @@ class ResourceAlreadyExists(RDSError):
 
     def __init__(self, resource_id):
         resource_type = self.__class__.__name__.replace("AlreadyExists", "")
-        super(ResourceAlreadyExists, self).__init__(
-            resource_id=resource_id, resource_type=resource_type
-        )
+        super().__init__(resource_id=resource_id, resource_type=resource_type)
 
 
 class DBInstanceAlreadyExists(ResourceAlreadyExists):
@@ -123,9 +116,7 @@ class InvalidDBClusterStateFault(RDSError):
     )
 
     def __init__(self, database_identifier):
-        super(InvalidDBClusterStateFault, self).__init__(
-            resource_id=database_identifier
-        )
+        super().__init__(resource_id=database_identifier)
 
 
 class DBClusterToBeDeletedHasActiveMembers(RDSError):
@@ -143,9 +134,7 @@ class InvalidDBInstanceState(RDSError):
             if istate == "stop"
             else "stopped, it cannot be started"
         )
-        super(InvalidDBInstanceState, self).__init__(
-            resource_id=database_identifier, status_msg=estate
-        )
+        super().__init__(resource_id=database_identifier, status_msg=estate)
 
 
 class SnapshotQuotaExceeded(RDSError):
@@ -162,7 +151,7 @@ class InvalidParameterValue(RDSError):
     def __init__(self, error_message=None, **kwargs):
         if error_message:
             kwargs["error_message"] = error_message
-        super(InvalidParameterValue, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
 
 class InvalidParameterCombination(RDSError):
@@ -174,7 +163,7 @@ class InvalidParameterCombination(RDSError):
     def __init__(self, error_message=None, **kwargs):
         if error_message:
             kwargs["error_message"] = error_message
-        super(InvalidParameterCombination, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
 
 class InvalidAvailabilityZones(RDSError):
@@ -192,7 +181,7 @@ class InvalidAvailabilityZones(RDSError):
             "invalid_zones": ", ".join(sorted(list(invalid_zones))),
             "verb": "are" if len(invalid_zones) > 1 else "is",
         }
-        super(InvalidAvailabilityZones, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
 
 class InvalidDBSnapshotIdentifierValue(InvalidParameterValue):
@@ -205,4 +194,4 @@ class InvalidDBSnapshotIdentifierValue(InvalidParameterValue):
     )
 
     def __init__(self, identifier):
-        super(InvalidDBSnapshotIdentifierValue, self).__init__(resource_id=identifier)
+        super().__init__(resource_id=identifier)

@@ -1,19 +1,21 @@
-from __future__ import unicode_literals
 from builtins import str
 
 import json
 import re
 
-from boto3 import Session
-
-from moto.core import BaseBackend, BaseModel
-from moto.core import ACCOUNT_ID
+from moto.core import BaseBackend, BackendDict, BaseModel
 from .exceptions import BadRequestException
 
 
 class FakeResourceGroup(BaseModel):
     def __init__(
-        self, name, resource_query, description=None, tags=None, configuration=None
+        self,
+        account_id,
+        name,
+        resource_query,
+        description=None,
+        tags=None,
+        configuration=None,
     ):
         self.errors = []
         description = description or ""
@@ -27,9 +29,7 @@ class FakeResourceGroup(BaseModel):
         if self._validate_tags(value=tags):
             self._tags = tags
         self._raise_errors()
-        self.arn = "arn:aws:resource-groups:us-west-1:{AccountId}:{name}".format(
-            name=name, AccountId=ACCOUNT_ID
-        )
+        self.arn = f"arn:aws:resource-groups:us-west-1:{account_id}:{name}"
         self.configuration = configuration
 
     @staticmethod
@@ -97,6 +97,8 @@ class FakeResourceGroup(BaseModel):
         return True
 
     def _validate_resource_query(self, value):
+        if not value:
+            return True
         errors = []
         if value["Type"] not in {"CLOUDFORMATION_STACK_1_0", "TAG_FILTERS_1_0"}:
             errors.append(
@@ -222,14 +224,15 @@ class ResourceGroups:
 
 
 class ResourceGroupsBackend(BaseBackend):
-    def __init__(self, region_name=None):
-        super(ResourceGroupsBackend, self).__init__()
-        self.region_name = region_name
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         self.groups = ResourceGroups()
 
     @staticmethod
     def _validate_resource_query(resource_query):
-        type = resource_query["Type"]
+        if not resource_query:
+            return
+        query_type = resource_query["Type"]
         query = json.loads(resource_query["Query"])
         query_keys = set(query.keys())
         invalid_json_exception = BadRequestException(
@@ -237,7 +240,7 @@ class ResourceGroupsBackend(BaseBackend):
         )
         if not isinstance(query["ResourceTypeFilters"], list):
             raise invalid_json_exception
-        if type == "CLOUDFORMATION_STACK_1_0":
+        if query_type == "CLOUDFORMATION_STACK_1_0":
             if query_keys != {"ResourceTypeFilters", "StackIdentifier"}:
                 raise invalid_json_exception
             stack_identifier = query["StackIdentifier"]
@@ -253,7 +256,7 @@ class ResourceGroupsBackend(BaseBackend):
             # Once checking other resources is implemented.
             # if stack_identifier not in self.cloudformation_backend.stacks:
             #   raise BadRequestException("Invalid query: The specified CloudFormation stack doesn't exist.")
-        if type == "TAG_FILTERS_1_0":
+        if query_type == "TAG_FILTERS_1_0":
             if query_keys != {"ResourceTypeFilters", "TagFilters"}:
                 raise invalid_json_exception
             tag_filters = query["TagFilters"]
@@ -305,6 +308,7 @@ class ResourceGroupsBackend(BaseBackend):
     ):
         tags = tags or {}
         group = FakeResourceGroup(
+            account_id=self.account_id,
             name=name,
             resource_query=resource_query,
             description=description,
@@ -329,14 +333,11 @@ class ResourceGroupsBackend(BaseBackend):
     def get_tags(self, arn):
         return self.groups.by_arn[arn].tags
 
-    # def list_group_resources(self):
-    #     ...
-
-    def list_groups(self, filters=None, max_results=None, next_token=None):
+    def list_groups(self):
+        """
+        Pagination or the Filters-parameter is not yet implemented
+        """
         return self.groups.by_name
-
-    # def search_resources(self):
-    #     ...
 
     def tag(self, arn, tags):
         all_tags = self.groups.by_arn[arn].tags
@@ -369,14 +370,4 @@ class ResourceGroupsBackend(BaseBackend):
         return self.groups.by_name[group_name]
 
 
-resourcegroups_backends = {}
-for region in Session().get_available_regions("resource-groups"):
-    resourcegroups_backends[region] = ResourceGroupsBackend(region)
-for region in Session().get_available_regions(
-    "resource-groups", partition_name="aws-us-gov"
-):
-    resourcegroups_backends[region] = ResourceGroupsBackend(region)
-for region in Session().get_available_regions(
-    "resource-groups", partition_name="aws-cn"
-):
-    resourcegroups_backends[region] = ResourceGroupsBackend(region)
+resourcegroups_backends = BackendDict(ResourceGroupsBackend, "resource-groups")

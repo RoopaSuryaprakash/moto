@@ -1,10 +1,7 @@
-from __future__ import unicode_literals
-
 import json
 
-from boto3 import Session
 from datetime import datetime
-from moto.core import ACCOUNT_ID, BaseBackend, BaseModel
+from moto.core import BaseBackend, BackendDict, BaseModel
 
 from .exceptions import (
     InvalidResourceStateFault,
@@ -15,15 +12,16 @@ from .utils import filter_tasks
 
 
 class DatabaseMigrationServiceBackend(BaseBackend):
-    def __init__(self, region_name=None):
-        super(DatabaseMigrationServiceBackend, self).__init__()
-        self.region_name = region_name
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         self.replication_tasks = {}
 
-    def reset(self):
-        region_name = self.region_name
-        self.__dict__ = {}
-        self.__init__(region_name)
+    @staticmethod
+    def default_vpc_endpoint_service(service_region, zones):
+        """Default VPC endpoint service."""
+        return BaseBackend.default_vpc_endpoint_service_factory(
+            service_region, zones, "dms"
+        )
 
     def create_replication_task(
         self,
@@ -34,13 +32,11 @@ class DatabaseMigrationServiceBackend(BaseBackend):
         migration_type,
         table_mappings,
         replication_task_settings,
-        cdc_start_time,
-        cdc_start_position,
-        cdc_stop_position,
-        tags,
-        task_data,
-        resource_identifier,
     ):
+        """
+        The following parameters are not yet implemented:
+        CDCStartTime, CDCStartPosition, CDCStopPosition, Tags, TaskData, ResourceIdentifier
+        """
         replication_task = FakeReplicationTask(
             replication_task_identifier=replication_task_identifier,
             source_endpoint_arn=source_endpoint_arn,
@@ -49,6 +45,7 @@ class DatabaseMigrationServiceBackend(BaseBackend):
             migration_type=migration_type,
             table_mappings=table_mappings,
             replication_task_settings=replication_task_settings,
+            account_id=self.account_id,
             region_name=self.region_name,
         )
 
@@ -61,14 +58,11 @@ class DatabaseMigrationServiceBackend(BaseBackend):
 
         return replication_task
 
-    def start_replication_task(
-        self,
-        replication_task_arn,
-        start_replication_task_type,
-        cdc_start_time,
-        cdc_start_position,
-        cdc_stop_position,
-    ):
+    def start_replication_task(self, replication_task_arn):
+        """
+        The following parameters have not yet been implemented:
+        StartReplicationTaskType, CDCStartTime, CDCStartPosition, CDCStopPosition
+        """
         if not self.replication_tasks.get(replication_task_arn):
             raise ResourceNotFoundFault("Replication task could not be found.")
 
@@ -90,13 +84,16 @@ class DatabaseMigrationServiceBackend(BaseBackend):
 
         return task
 
-    def describe_replication_tasks(self, filters, max_records, without_settings):
+    def describe_replication_tasks(self, filters, max_records):
+        """
+        The parameter WithoutSettings has not yet been implemented
+        """
         replication_tasks = filter_tasks(self.replication_tasks.values(), filters)
 
         if max_records and max_records > 0:
             replication_tasks = replication_tasks[:max_records]
 
-        return None, replication_tasks
+        return replication_tasks
 
 
 class FakeReplicationTask(BaseModel):
@@ -109,6 +106,7 @@ class FakeReplicationTask(BaseModel):
         target_endpoint_arn,
         table_mappings,
         replication_task_settings,
+        account_id,
         region_name,
     ):
         self.id = replication_task_identifier
@@ -120,17 +118,12 @@ class FakeReplicationTask(BaseModel):
         self.table_mappings = table_mappings
         self.replication_task_settings = replication_task_settings
 
+        self.arn = f"arn:aws:dms:{region_name}:{account_id}:task:{self.id}"
         self.status = "creating"
 
         self.creation_date = datetime.utcnow()
         self.start_date = None
         self.stop_date = None
-
-    @property
-    def arn(self):
-        return "arn:aws:dms:{region}:{account_id}:task:{task_id}".format(
-            region=self.region, account_id=ACCOUNT_ID, task_id=self.id
-        )
 
     def to_dict(self):
         start_date = self.start_date.isoformat() if self.start_date else None
@@ -190,10 +183,4 @@ class FakeReplicationTask(BaseModel):
         return self
 
 
-dms_backends = {}
-for region in Session().get_available_regions("dms"):
-    dms_backends[region] = DatabaseMigrationServiceBackend()
-for region in Session().get_available_regions("dms", partition_name="aws-us-gov"):
-    dms_backends[region] = DatabaseMigrationServiceBackend()
-for region in Session().get_available_regions("dms", partition_name="aws-cn"):
-    dms_backends[region] = DatabaseMigrationServiceBackend()
+dms_backends = BackendDict(DatabaseMigrationServiceBackend, "dms")

@@ -1,23 +1,16 @@
-from __future__ import unicode_literals
-
 import boto3
 import json
 import os
-import sure  # noqa
-import sys
+import sure  # noqa # pylint: disable=unused-import
 from datetime import datetime
 from dateutil.tz import tzutc
 from botocore.exceptions import ClientError
 import pytest
 
-from moto import mock_cloudformation, mock_sts, mock_stepfunctions
-from moto.core import ACCOUNT_ID
+from moto import mock_sts, mock_stepfunctions
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 
-if sys.version_info[0] < 3:
-    import mock
-    from unittest import SkipTest
-else:
-    from unittest import SkipTest, mock
+from unittest import SkipTest, mock
 
 region = "us-east-1"
 simple_definition = (
@@ -194,8 +187,8 @@ def test_update_state_machine():
 def test_state_machine_list_returns_empty_list_by_default():
     client = boto3.client("stepfunctions", region_name=region)
     #
-    list = client.list_state_machines()
-    list["stateMachines"].should.be.empty
+    sm_list = client.list_state_machines()
+    sm_list["stateMachines"].should.equal([])
 
 
 @mock_stepfunctions
@@ -212,25 +205,26 @@ def test_state_machine_list_returns_created_state_machines():
     machine2 = client.create_state_machine(
         name="name2", definition=str(simple_definition), roleArn=_get_default_role()
     )
-    list = client.list_state_machines()
+    sm_list = client.list_state_machines()
     #
-    list["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
-    list["stateMachines"].should.have.length_of(2)
-    list["stateMachines"][0]["creationDate"].should.be.a(datetime)
-    list["stateMachines"][0]["creationDate"].should.equal(machine1["creationDate"])
-    list["stateMachines"][0]["name"].should.equal("name1")
-    list["stateMachines"][0]["stateMachineArn"].should.equal(
+    sm_list["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
+    sm_list["stateMachines"].should.have.length_of(2)
+    sm_list["stateMachines"][0]["creationDate"].should.be.a(datetime)
+    sm_list["stateMachines"][0]["creationDate"].should.equal(machine1["creationDate"])
+    sm_list["stateMachines"][0]["name"].should.equal("name1")
+    sm_list["stateMachines"][0]["stateMachineArn"].should.equal(
         machine1["stateMachineArn"]
     )
-    list["stateMachines"][1]["creationDate"].should.be.a(datetime)
-    list["stateMachines"][1]["creationDate"].should.equal(machine2["creationDate"])
-    list["stateMachines"][1]["name"].should.equal("name2")
-    list["stateMachines"][1]["stateMachineArn"].should.equal(
+    sm_list["stateMachines"][1]["creationDate"].should.be.a(datetime)
+    sm_list["stateMachines"][1]["creationDate"].should.equal(machine2["creationDate"])
+    sm_list["stateMachines"][1]["name"].should.equal("name2")
+    sm_list["stateMachines"][1]["stateMachineArn"].should.equal(
         machine2["stateMachineArn"]
     )
 
 
 @mock_stepfunctions
+@mock_sts
 def test_state_machine_list_pagination():
     client = boto3.client("stepfunctions", region_name=region)
     for i in range(25):
@@ -301,11 +295,7 @@ def test_state_machine_throws_error_when_describing_unknown_machine():
     #
     with pytest.raises(ClientError):
         unknown_state_machine = (
-            "arn:aws:states:"
-            + region
-            + ":"
-            + _get_account_id()
-            + ":stateMachine:unknown"
+            f"arn:aws:states:{region}:{ACCOUNT_ID}:stateMachine:unknown"
         )
         client.describe_state_machine(stateMachineArn=unknown_state_machine)
 
@@ -364,9 +354,7 @@ def test_state_machine_can_deleted_nonexisting_machine():
 @mock_stepfunctions
 def test_state_machine_tagging_non_existent_resource_fails():
     client = boto3.client("stepfunctions", region_name=region)
-    non_existent_arn = "arn:aws:states:{region}:{account}:stateMachine:non-existent".format(
-        region=region, account=ACCOUNT_ID
-    )
+    non_existent_arn = f"arn:aws:states:{region}:{ACCOUNT_ID}:stateMachine:non-existent"
     with pytest.raises(ClientError) as ex:
         client.tag_resource(resourceArn=non_existent_arn, tags=[])
     ex.value.response["Error"]["Code"].should.equal("ResourceNotFound")
@@ -376,9 +364,7 @@ def test_state_machine_tagging_non_existent_resource_fails():
 @mock_stepfunctions
 def test_state_machine_untagging_non_existent_resource_fails():
     client = boto3.client("stepfunctions", region_name=region)
-    non_existent_arn = "arn:aws:states:{region}:{account}:stateMachine:non-existent".format(
-        region=region, account=ACCOUNT_ID
-    )
+    non_existent_arn = f"arn:aws:states:{region}:{ACCOUNT_ID}:stateMachine:non-existent"
     with pytest.raises(ClientError) as ex:
         client.untag_resource(resourceArn=non_existent_arn, tagKeys=[])
     ex.value.response["Error"]["Code"].should.equal("ResourceNotFound")
@@ -394,7 +380,7 @@ def test_state_machine_tagging():
         {"key": "tag_key2", "value": "tag_value2"},
     ]
     machine = client.create_state_machine(
-        name="test", definition=str(simple_definition), roleArn=_get_default_role(),
+        name="test", definition=str(simple_definition), roleArn=_get_default_role()
     )
     client.tag_resource(resourceArn=machine["stateMachineArn"], tags=tags)
     resp = client.list_tags_for_resource(resourceArn=machine["stateMachineArn"])
@@ -476,7 +462,7 @@ def test_state_machine_list_tags_for_nonexisting_machine():
     client = boto3.client("stepfunctions", region_name=region)
     #
     non_existing_state_machine = (
-        "arn:aws:states:" + region + ":" + _get_account_id() + ":stateMachine:unknown"
+        f"arn:aws:states:{region}:{ACCOUNT_ID}:stateMachine:unknown"
     )
     response = client.list_tags_for_resource(resourceArn=non_existing_state_machine)
     tags = response["tags"]
@@ -496,12 +482,7 @@ def test_state_machine_start_execution():
     execution["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
     uuid_regex = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"
     expected_exec_name = (
-        "arn:aws:states:"
-        + region
-        + ":"
-        + _get_account_id()
-        + ":execution:name:"
-        + uuid_regex
+        f"arn:aws:states:{region}:{ACCOUNT_ID}:execution:name:{uuid_regex}"
     )
     execution["executionArn"].should.match(expected_exec_name)
     execution["startDate"].should.be.a(datetime)
@@ -530,11 +511,7 @@ def test_state_machine_start_execution_with_custom_name():
     #
     execution["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
     expected_exec_name = (
-        "arn:aws:states:"
-        + region
-        + ":"
-        + _get_account_id()
-        + ":execution:name:execution_name"
+        f"arn:aws:states:{region}:{ACCOUNT_ID}:execution:name:execution_name"
     )
     execution["executionArn"].should.equal(expected_exec_name)
     execution["startDate"].should.be.a(datetime)
@@ -577,12 +554,7 @@ def test_state_machine_start_execution_with_custom_input():
     execution["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
     uuid_regex = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"
     expected_exec_name = (
-        "arn:aws:states:"
-        + region
-        + ":"
-        + _get_account_id()
-        + ":execution:name:"
-        + uuid_regex
+        f"arn:aws:states:{region}:{ACCOUNT_ID}:execution:name:{uuid_regex}"
     )
     execution["executionArn"].should.match(expected_exec_name)
     execution["startDate"].should.be.a(datetime)
@@ -716,7 +688,7 @@ def test_state_machine_describe_execution_with_no_input():
     description["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
     description["executionArn"].should.equal(execution["executionArn"])
     description["input"].should.equal("{}")
-    description["name"].shouldnt.be.empty
+    description["name"].should.match("[-0-9a-z]+")
     description["startDate"].should.equal(execution["startDate"])
     description["stateMachineArn"].should.equal(sm["stateMachineArn"])
     description["status"].should.equal("RUNNING")
@@ -740,7 +712,7 @@ def test_state_machine_describe_execution_with_custom_input():
     description["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
     description["executionArn"].should.equal(execution["executionArn"])
     description["input"].should.equal(execution_input)
-    description["name"].shouldnt.be.empty
+    description["name"].should.match("[-a-z0-9]+")
     description["startDate"].should.equal(execution["startDate"])
     description["stateMachineArn"].should.equal(sm["stateMachineArn"])
     description["status"].should.equal("RUNNING")
@@ -753,9 +725,7 @@ def test_execution_throws_error_when_describing_unknown_execution():
     client = boto3.client("stepfunctions", region_name=region)
     #
     with pytest.raises(ClientError):
-        unknown_execution = (
-            "arn:aws:states:" + region + ":" + _get_account_id() + ":execution:unknown"
-        )
+        unknown_execution = f"arn:aws:states:{region}:{ACCOUNT_ID}:execution:unknown"
         client.describe_execution(executionArn=unknown_execution)
 
 
@@ -784,9 +754,7 @@ def test_state_machine_throws_error_when_describing_unknown_execution():
     client = boto3.client("stepfunctions", region_name=region)
     #
     with pytest.raises(ClientError):
-        unknown_execution = (
-            "arn:aws:states:" + region + ":" + _get_account_id() + ":execution:unknown"
-        )
+        unknown_execution = f"arn:aws:states:{region}:{ACCOUNT_ID}:execution:unknown"
         client.describe_state_machine_for_execution(executionArn=unknown_execution)
 
 
@@ -816,11 +784,7 @@ def test_state_machine_stop_raises_error_when_unknown_execution():
     )
     with pytest.raises(ClientError) as ex:
         unknown_execution = (
-            "arn:aws:states:"
-            + region
-            + ":"
-            + _get_account_id()
-            + ":execution:test-state-machine:unknown"
+            f"arn:aws:states:{region}:{ACCOUNT_ID}:execution:test-state-machine:unknown"
         )
         client.stop_execution(executionArn=unknown_execution)
     ex.value.response["Error"]["Code"].should.equal("ExecutionDoesNotExist")
@@ -854,11 +818,7 @@ def test_state_machine_get_execution_history_throws_error_with_unknown_execution
     )
     with pytest.raises(ClientError) as ex:
         unknown_execution = (
-            "arn:aws:states:"
-            + region
-            + ":"
-            + _get_account_id()
-            + ":execution:test-state-machine:unknown"
+            f"arn:aws:states:{region}:{ACCOUNT_ID}:execution:test-state-machine:unknown"
         )
         client.get_execution_history(executionArn=unknown_execution)
     ex.value.response["Error"]["Code"].should.equal("ExecutionDoesNotExist")
@@ -928,6 +888,14 @@ def test_state_machine_get_execution_history_contains_expected_success_events_wh
     execution_history["events"].should.equal(expected_events)
 
 
+@pytest.mark.parametrize("test_region", ["us-west-2", "cn-northwest-1"])
+@mock_stepfunctions
+def test_stepfunction_regions(test_region):
+    client = boto3.client("stepfunctions", region_name=test_region)
+    resp = client.list_state_machines()
+    resp["ResponseMetadata"]["HTTPStatusCode"].should.equal(200)
+
+
 @mock_stepfunctions
 @mock_sts
 @mock.patch.dict(os.environ, {"SF_EXECUTION_HISTORY_TYPE": "FAILURE"})
@@ -983,15 +951,5 @@ def test_state_machine_get_execution_history_contains_expected_failure_events_wh
     execution_history["events"].should.equal(expected_events)
 
 
-def _get_account_id():
-    global account_id
-    if account_id:
-        return account_id
-    sts = boto3.client("sts", region_name=region)
-    identity = sts.get_caller_identity()
-    account_id = identity["Account"]
-    return account_id
-
-
 def _get_default_role():
-    return "arn:aws:iam::" + _get_account_id() + ":role/unknown_sf_role"
+    return "arn:aws:iam::" + ACCOUNT_ID + ":role/unknown_sf_role"

@@ -1,15 +1,11 @@
-from __future__ import unicode_literals
-
 import copy
 import datetime
 
-from boto3 import Session
-
-from moto.compat import OrderedDict
-from moto.core import BaseBackend, BaseModel, CloudFormationModel
+from collections import OrderedDict
+from moto.core import BaseBackend, BackendDict, BaseModel, CloudFormationModel
 from moto.core.utils import iso_8601_datetime_with_milliseconds
-from moto.utilities.utils import random_string
 from moto.ec2 import ec2_backends
+from moto.moto_api._internal import mock_random
 from .exceptions import (
     ClusterAlreadyExistsFaultError,
     ClusterNotFoundError,
@@ -29,17 +25,16 @@ from .exceptions import (
     SnapshotCopyGrantNotFoundFaultError,
     UnknownSnapshotCopyRegionFaultError,
     ClusterSecurityGroupNotFoundFaultError,
+    InvalidClusterSnapshotStateFaultError,
 )
-
-
-from moto.core import ACCOUNT_ID
 
 
 class TaggableResourceMixin(object):
 
     resource_type = None
 
-    def __init__(self, region_name, tags):
+    def __init__(self, account_id, region_name, tags):
+        self.account_id = account_id
         self.region = region_name
         self.tags = tags or []
 
@@ -49,12 +44,7 @@ class TaggableResourceMixin(object):
 
     @property
     def arn(self):
-        return "arn:aws:redshift:{region}:{account_id}:{resource_type}:{resource_id}".format(
-            region=self.region,
-            account_id=ACCOUNT_ID,
-            resource_type=self.resource_type,
-            resource_id=self.resource_id,
-        )
+        return f"arn:aws:redshift:{self.region}:{self.account_id}:{self.resource_type}:{self.resource_id}"
 
     def create_tags(self, tags):
         new_keys = [tag_set["Key"] for tag_set in tags]
@@ -100,7 +90,7 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
         restored_from_snapshot=False,
         kms_key_id=None,
     ):
-        super(Cluster, self).__init__(region_name, tags)
+        super().__init__(redshift_backend.account_id, region_name, tags)
         self.redshift_backend = redshift_backend
         self.cluster_identifier = cluster_identifier
         self.create_time = iso_8601_datetime_with_milliseconds(
@@ -174,9 +164,9 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
 
     @classmethod
     def create_from_cloudformation_json(
-        cls, resource_name, cloudformation_json, region_name
+        cls, resource_name, cloudformation_json, account_id, region_name, **kwargs
     ):
-        redshift_backend = redshift_backends[region_name]
+        redshift_backend = redshift_backends[account_id][region_name]
         properties = cloudformation_json["Properties"]
 
         if "ClusterSubnetGroupName" in properties:
@@ -213,6 +203,10 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
             kms_key_id=properties.get("KmsKeyId"),
         )
         return cluster
+
+    @classmethod
+    def has_cfn_attr(cls, attr):
+        return attr in ["Endpoint.Address", "Endpoint.Port"]
 
     def get_cfn_attribute(self, attribute_name):
         from moto.cloudformation.exceptions import UnformattedGetAttTemplateException
@@ -258,6 +252,12 @@ class Cluster(TaggableResourceMixin, CloudFormationModel):
     @property
     def resource_id(self):
         return self.cluster_identifier
+
+    def pause(self):
+        self.status = "paused"
+
+    def resume(self):
+        self.status = "available"
 
     def to_json(self):
         json_response = {
@@ -352,7 +352,7 @@ class SubnetGroup(TaggableResourceMixin, CloudFormationModel):
         region_name,
         tags=None,
     ):
-        super(SubnetGroup, self).__init__(region_name, tags)
+        super().__init__(ec2_backend.account_id, region_name, tags)
         self.ec2_backend = ec2_backend
         self.cluster_subnet_group_name = cluster_subnet_group_name
         self.description = description
@@ -371,9 +371,9 @@ class SubnetGroup(TaggableResourceMixin, CloudFormationModel):
 
     @classmethod
     def create_from_cloudformation_json(
-        cls, resource_name, cloudformation_json, region_name
+        cls, resource_name, cloudformation_json, account_id, region_name, **kwargs
     ):
-        redshift_backend = redshift_backends[region_name]
+        redshift_backend = redshift_backends[account_id][region_name]
         properties = cloudformation_json["Properties"]
 
         subnet_group = redshift_backend.create_cluster_subnet_group(
@@ -419,9 +419,14 @@ class SecurityGroup(TaggableResourceMixin, BaseModel):
     resource_type = "securitygroup"
 
     def __init__(
-        self, cluster_security_group_name, description, region_name, tags=None
+        self,
+        cluster_security_group_name,
+        description,
+        account_id,
+        region_name,
+        tags=None,
     ):
-        super(SecurityGroup, self).__init__(region_name, tags)
+        super().__init__(account_id, region_name, tags)
         self.cluster_security_group_name = cluster_security_group_name
         self.description = description
         self.ingress_rules = []
@@ -449,10 +454,11 @@ class ParameterGroup(TaggableResourceMixin, CloudFormationModel):
         cluster_parameter_group_name,
         group_family,
         description,
+        account_id,
         region_name,
         tags=None,
     ):
-        super(ParameterGroup, self).__init__(region_name, tags)
+        super().__init__(account_id, region_name, tags)
         self.cluster_parameter_group_name = cluster_parameter_group_name
         self.group_family = group_family
         self.description = description
@@ -468,9 +474,9 @@ class ParameterGroup(TaggableResourceMixin, CloudFormationModel):
 
     @classmethod
     def create_from_cloudformation_json(
-        cls, resource_name, cloudformation_json, region_name
+        cls, resource_name, cloudformation_json, account_id, region_name, **kwargs
     ):
-        redshift_backend = redshift_backends[region_name]
+        redshift_backend = redshift_backends[account_id][region_name]
         properties = cloudformation_json["Properties"]
 
         parameter_group = redshift_backend.create_cluster_parameter_group(
@@ -499,12 +505,19 @@ class Snapshot(TaggableResourceMixin, BaseModel):
     resource_type = "snapshot"
 
     def __init__(
-        self, cluster, snapshot_identifier, region_name, tags=None, iam_roles_arn=None
+        self,
+        cluster,
+        snapshot_identifier,
+        account_id,
+        region_name,
+        tags=None,
+        iam_roles_arn=None,
+        snapshot_type="manual",
     ):
-        super(Snapshot, self).__init__(region_name, tags)
+        super().__init__(account_id, region_name, tags)
         self.cluster = copy.copy(cluster)
         self.snapshot_identifier = snapshot_identifier
-        self.snapshot_type = "manual"
+        self.snapshot_type = snapshot_type
         self.status = "available"
         self.create_time = iso_8601_datetime_with_milliseconds(datetime.datetime.now())
         self.iam_roles_arn = iam_roles_arn or []
@@ -540,13 +553,13 @@ class Snapshot(TaggableResourceMixin, BaseModel):
 
 
 class RedshiftBackend(BaseBackend):
-    def __init__(self, ec2_backend, region_name):
-        self.region = region_name
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         self.clusters = {}
         self.subnet_groups = {}
         self.security_groups = {
             "Default": SecurityGroup(
-                "Default", "Default Redshift Security Group", self.region
+                "Default", "Default Redshift Security Group", account_id, region_name
             )
         }
         self.parameter_groups = {
@@ -554,10 +567,11 @@ class RedshiftBackend(BaseBackend):
                 "default.redshift-1.0",
                 "redshift-1.0",
                 "Default Redshift parameter group",
-                self.region,
+                self.account_id,
+                self.region_name,
             )
         }
-        self.ec2_backend = ec2_backend
+        self.ec2_backend = ec2_backends[self.account_id][self.region_name]
         self.snapshots = OrderedDict()
         self.RESOURCE_TYPE_MAP = {
             "cluster": self.clusters,
@@ -568,11 +582,14 @@ class RedshiftBackend(BaseBackend):
         }
         self.snapshot_copy_grants = {}
 
-    def reset(self):
-        ec2_backend = self.ec2_backend
-        region_name = self.region
-        self.__dict__ = {}
-        self.__init__(ec2_backend, region_name)
+    @staticmethod
+    def default_vpc_endpoint_service(service_region, zones):
+        """Default VPC endpoint service."""
+        return BaseBackend.default_vpc_endpoint_service_factory(
+            service_region, zones, "redshift"
+        ) + BaseBackend.default_vpc_endpoint_service_factory(
+            service_region, zones, "redshift-data", policy_supported=False
+        )
 
     def enable_snapshot_copy(self, **kwargs):
         cluster_identifier = kwargs["cluster_identifier"]
@@ -585,9 +602,9 @@ class RedshiftBackend(BaseBackend):
                 raise InvalidParameterValueError(
                     "SnapshotCopyGrantName is required for Snapshot Copy on KMS encrypted clusters."
                 )
-            if kwargs["destination_region"] == self.region:
+            if kwargs["destination_region"] == self.region_name:
                 raise UnknownSnapshotCopyRegionFaultError(
-                    "Invalid region {}".format(self.region)
+                    "Invalid region {}".format(self.region_name)
                 )
             status = {
                 "DestinationRegion": kwargs["destination_region"],
@@ -624,7 +641,30 @@ class RedshiftBackend(BaseBackend):
             raise ClusterAlreadyExistsFaultError()
         cluster = Cluster(self, **cluster_kwargs)
         self.clusters[cluster_identifier] = cluster
+        snapshot_id = "rs:{}-{}".format(
+            cluster_identifier, datetime.datetime.utcnow().strftime("%Y-%m-%d-%H-%M")
+        )
+        # Automated snapshots don't copy over the tags
+        self.create_cluster_snapshot(
+            cluster_identifier,
+            snapshot_id,
+            cluster.region,
+            None,
+            snapshot_type="automated",
+        )
         return cluster
+
+    def pause_cluster(self, cluster_id):
+        if cluster_id not in self.clusters:
+            raise ClusterNotFoundError(cluster_identifier=cluster_id)
+        self.clusters[cluster_id].pause()
+        return self.clusters[cluster_id]
+
+    def resume_cluster(self, cluster_id):
+        if cluster_id not in self.clusters:
+            raise ClusterNotFoundError(cluster_identifier=cluster_id)
+        self.clusters[cluster_id].resume()
+        return self.clusters[cluster_id]
 
     def describe_clusters(self, cluster_identifier=None):
         clusters = self.clusters.values()
@@ -670,6 +710,14 @@ class RedshiftBackend(BaseBackend):
 
         return cluster
 
+    def delete_automated_snapshots(self, cluster_identifier):
+        snapshots = self.describe_cluster_snapshots(
+            cluster_identifier=cluster_identifier
+        )
+        for snapshot in snapshots:
+            if snapshot.snapshot_type == "automated":
+                self.snapshots.pop(snapshot.snapshot_identifier)
+
     def delete_cluster(self, **cluster_kwargs):
         cluster_identifier = cluster_kwargs.pop("cluster_identifier")
         cluster_skip_final_snapshot = cluster_kwargs.pop("skip_final_snapshot")
@@ -696,7 +744,7 @@ class RedshiftBackend(BaseBackend):
                     cluster.region,
                     cluster.tags,
                 )
-
+            self.delete_automated_snapshots(cluster_identifier)
             return self.clusters.pop(cluster_identifier)
         raise ClusterNotFoundError(cluster_identifier)
 
@@ -729,10 +777,14 @@ class RedshiftBackend(BaseBackend):
         raise ClusterSubnetGroupNotFoundError(subnet_identifier)
 
     def create_cluster_security_group(
-        self, cluster_security_group_name, description, region_name, tags=None
+        self, cluster_security_group_name, description, tags=None
     ):
         security_group = SecurityGroup(
-            cluster_security_group_name, description, region_name, tags
+            cluster_security_group_name,
+            description,
+            self.account_id,
+            self.region_name,
+            tags,
         )
         self.security_groups[cluster_security_group_name] = security_group
         return security_group
@@ -770,7 +822,12 @@ class RedshiftBackend(BaseBackend):
         tags=None,
     ):
         parameter_group = ParameterGroup(
-            cluster_parameter_group_name, group_family, description, region_name, tags
+            cluster_parameter_group_name,
+            group_family,
+            description,
+            self.account_id,
+            region_name,
+            tags,
         )
         self.parameter_groups[cluster_parameter_group_name] = parameter_group
 
@@ -791,31 +848,48 @@ class RedshiftBackend(BaseBackend):
         raise ClusterParameterGroupNotFoundError(parameter_group_name)
 
     def create_cluster_snapshot(
-        self, cluster_identifier, snapshot_identifier, region_name, tags
+        self,
+        cluster_identifier,
+        snapshot_identifier,
+        region_name,
+        tags,
+        snapshot_type="manual",
     ):
         cluster = self.clusters.get(cluster_identifier)
         if not cluster:
             raise ClusterNotFoundError(cluster_identifier)
         if self.snapshots.get(snapshot_identifier) is not None:
             raise ClusterSnapshotAlreadyExistsError(snapshot_identifier)
-        snapshot = Snapshot(cluster, snapshot_identifier, region_name, tags)
+        snapshot = Snapshot(
+            cluster,
+            snapshot_identifier,
+            self.account_id,
+            region_name,
+            tags,
+            snapshot_type=snapshot_type,
+        )
         self.snapshots[snapshot_identifier] = snapshot
         return snapshot
 
     def describe_cluster_snapshots(
-        self, cluster_identifier=None, snapshot_identifier=None
+        self, cluster_identifier=None, snapshot_identifier=None, snapshot_type=None
     ):
+        snapshot_types = (
+            ["automated", "manual"] if snapshot_type is None else [snapshot_type]
+        )
         if cluster_identifier:
             cluster_snapshots = []
             for snapshot in self.snapshots.values():
                 if snapshot.cluster.cluster_identifier == cluster_identifier:
-                    cluster_snapshots.append(snapshot)
+                    if snapshot.snapshot_type in snapshot_types:
+                        cluster_snapshots.append(snapshot)
             if cluster_snapshots:
                 return cluster_snapshots
 
         if snapshot_identifier:
             if snapshot_identifier in self.snapshots:
-                return [self.snapshots[snapshot_identifier]]
+                if self.snapshots[snapshot_identifier].snapshot_type in snapshot_types:
+                    return [self.snapshots[snapshot_identifier]]
             raise ClusterSnapshotNotFoundError(snapshot_identifier)
 
         return self.snapshots.values()
@@ -824,6 +898,11 @@ class RedshiftBackend(BaseBackend):
         if snapshot_identifier not in self.snapshots:
             raise ClusterSnapshotNotFoundError(snapshot_identifier)
 
+        snapshot = self.describe_cluster_snapshots(
+            snapshot_identifier=snapshot_identifier
+        )[0]
+        if snapshot.snapshot_type == "automated":
+            raise InvalidClusterSnapshotStateFaultError(snapshot_identifier)
         deleted_snapshot = self.snapshots.pop(snapshot_identifier)
         deleted_snapshot.status = "deleted"
         return deleted_snapshot
@@ -971,17 +1050,11 @@ class RedshiftBackend(BaseBackend):
             db_user = user_prefix + db_user
             return {
                 "DbUser": db_user,
-                "DbPassword": random_string(32),
+                "DbPassword": mock_random.get_random_string(32),
                 "Expiration": expiration,
             }
         else:
             raise ClusterNotFoundError(cluster_identifier)
 
 
-redshift_backends = {}
-for region in Session().get_available_regions("redshift"):
-    redshift_backends[region] = RedshiftBackend(ec2_backends[region], region)
-for region in Session().get_available_regions("redshift", partition_name="aws-us-gov"):
-    redshift_backends[region] = RedshiftBackend(ec2_backends[region], region)
-for region in Session().get_available_regions("redshift", partition_name="aws-cn"):
-    redshift_backends[region] = RedshiftBackend(ec2_backends[region], region)
+redshift_backends = BackendDict(RedshiftBackend, "redshift")

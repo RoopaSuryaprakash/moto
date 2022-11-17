@@ -1,14 +1,16 @@
-from __future__ import unicode_literals
 from datetime import datetime
 from datetime import timedelta
 
 import warnings
 
 import pytz
-from boto3 import Session
 from dateutil.parser import parse as dtparse
-from moto.core import ACCOUNT_ID, BaseBackend, BaseModel
-from moto.emr.exceptions import EmrError, InvalidRequestException, ValidationException
+from moto.core import BaseBackend, BackendDict, BaseModel
+from moto.emr.exceptions import (
+    InvalidRequestException,
+    ValidationException,
+    ResourceNotFoundException,
+)
 from .utils import (
     random_instance_group_id,
     random_cluster_id,
@@ -37,9 +39,9 @@ class FakeBootstrapAction(BaseModel):
 
 class FakeInstance(BaseModel):
     def __init__(
-        self, ec2_instance_id, instance_group, instance_fleet_id=None, id=None,
+        self, ec2_instance_id, instance_group, instance_fleet_id=None, instance_id=None
     ):
-        self.id = id or random_instance_group_id()
+        self.id = instance_id or random_instance_group_id()
         self.ec2_instance_id = ec2_instance_id
         self.instance_group = instance_group
         self.instance_fleet_id = instance_fleet_id
@@ -54,12 +56,12 @@ class FakeInstanceGroup(BaseModel):
         instance_type,
         market="ON_DEMAND",
         name=None,
-        id=None,
+        instance_group_id=None,
         bid_price=None,
         ebs_configuration=None,
         auto_scaling_policy=None,
     ):
-        self.id = id or random_instance_group_id()
+        self.id = instance_group_id or random_instance_group_id()
         self.cluster_id = cluster_id
 
         self.bid_price = bid_price
@@ -164,6 +166,7 @@ class FakeCluster(BaseModel):
         step_concurrency_level=1,
         security_configuration=None,
         kerberos_attributes=None,
+        auto_scaling_role=None,
     ):
         self.id = cluster_id or random_cluster_id()
         emr_backend.clusters[self.id] = self
@@ -271,12 +274,11 @@ class FakeCluster(BaseModel):
             security_configuration  # ToDo: Raise if doesn't already exist.
         )
         self.kerberos_attributes = kerberos_attributes
+        self.auto_scaling_role = auto_scaling_role
 
     @property
     def arn(self):
-        return "arn:aws:elasticmapreduce:{0}:{1}:cluster/{2}".format(
-            self.emr_backend.region_name, ACCOUNT_ID, self.id
-        )
+        return f"arn:aws:elasticmapreduce:{self.emr_backend.region_name}:{self.emr_backend.account_id}:cluster/{self.id}"
 
     @property
     def instance_groups(self):
@@ -357,7 +359,7 @@ class FakeCluster(BaseModel):
                 # If we already have other steps, this one is pending
                 fake = FakeStep(state="PENDING", **step)
             else:
-                fake = FakeStep(state="STARTING", **step)
+                fake = FakeStep(state="RUNNING", **step)
             self.steps.append(fake)
             added_steps.append(fake)
         self.state = "RUNNING"
@@ -385,17 +387,18 @@ class FakeSecurityConfiguration(BaseModel):
 
 
 class ElasticMapReduceBackend(BaseBackend):
-    def __init__(self, region_name):
-        super(ElasticMapReduceBackend, self).__init__()
-        self.region_name = region_name
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         self.clusters = {}
         self.instance_groups = {}
         self.security_configurations = {}
 
-    def reset(self):
-        region_name = self.region_name
-        self.__dict__ = {}
-        self.__init__(region_name)
+    @staticmethod
+    def default_vpc_endpoint_service(service_region, zones):
+        """Default VPC endpoint service."""
+        return BaseBackend.default_vpc_endpoint_service_factory(
+            service_region, zones, "elasticmapreduce"
+        )
 
     @property
     def ec2_backend(self):
@@ -405,10 +408,10 @@ class ElasticMapReduceBackend(BaseBackend):
         """
         from moto.ec2 import ec2_backends
 
-        return ec2_backends[self.region_name]
+        return ec2_backends[self.account_id][self.region_name]
 
     def add_applications(self, cluster_id, applications):
-        cluster = self.get_cluster(cluster_id)
+        cluster = self.describe_cluster(cluster_id)
         cluster.add_applications(applications)
 
     def add_instance_groups(self, cluster_id, instance_groups):
@@ -423,12 +426,13 @@ class ElasticMapReduceBackend(BaseBackend):
 
     def add_instances(self, cluster_id, instances, instance_group):
         cluster = self.clusters[cluster_id]
+        instances["is_instance_type_default"] = not instances.get("instance_type")
         response = self.ec2_backend.add_instances(
             EXAMPLE_AMI_ID, instances["instance_count"], "", [], **instances
         )
         for instance in response.instances:
             instance = FakeInstance(
-                ec2_instance_id=instance.id, instance_group=instance_group,
+                ec2_instance_id=instance.id, instance_group=instance_group
             )
             cluster.add_instance(instance)
 
@@ -438,7 +442,7 @@ class ElasticMapReduceBackend(BaseBackend):
         return steps
 
     def add_tags(self, cluster_id, tags):
-        cluster = self.get_cluster(cluster_id)
+        cluster = self.describe_cluster(cluster_id)
         cluster.add_tags(tags)
 
     def describe_job_flows(
@@ -473,10 +477,10 @@ class ElasticMapReduceBackend(BaseBackend):
             if step.id == step_id:
                 return step
 
-    def get_cluster(self, cluster_id):
+    def describe_cluster(self, cluster_id):
         if cluster_id in self.clusters:
             return self.clusters[cluster_id]
-        raise EmrError("ResourceNotFoundException", "", "error_json")
+        raise ResourceNotFoundException("")
 
     def get_instance_groups(self, instance_group_ids):
         return [
@@ -548,7 +552,11 @@ class ElasticMapReduceBackend(BaseBackend):
 
     def list_steps(self, cluster_id, marker=None, step_ids=None, step_states=None):
         max_items = 50
-        steps = self.clusters[cluster_id].steps
+        steps = sorted(
+            self.clusters[cluster_id].steps,
+            key=lambda o: o.creation_datetime,
+            reverse=True,
+        )
         if step_ids:
             steps = [s for s in steps if s.id in step_ids]
         if step_states:
@@ -572,7 +580,7 @@ class ElasticMapReduceBackend(BaseBackend):
         return result_groups
 
     def remove_tags(self, cluster_id, tag_keys):
-        cluster = self.get_cluster(cluster_id)
+        cluster = self.describe_cluster(cluster_id)
         cluster.remove_tags(tag_keys)
 
     def _manage_security_groups(
@@ -581,7 +589,7 @@ class ElasticMapReduceBackend(BaseBackend):
         emr_managed_master_security_group,
         emr_managed_slave_security_group,
         service_access_security_group,
-        **_
+        **_,
     ):
         default_return_value = (
             emr_managed_master_security_group,
@@ -598,10 +606,10 @@ class ElasticMapReduceBackend(BaseBackend):
             subnet = self.ec2_backend.get_subnet(ec2_subnet_id)
         except InvalidSubnetIdError:
             warnings.warn(
-                "Could not find Subnet with id: {0}\n"
+                f"Could not find Subnet with id: {ec2_subnet_id}\n"
                 "In the near future, this will raise an error.\n"
                 "Use ec2.describe_subnets() to find a suitable id "
-                "for your test.".format(ec2_subnet_id),
+                "for your test.",
                 PendingDeprecationWarning,
             )
             return default_return_value
@@ -658,21 +666,13 @@ class ElasticMapReduceBackend(BaseBackend):
         instance_group.auto_scaling_policy = auto_scaling_policy
         return instance_group
 
-    def remove_auto_scaling_policy(self, cluster_id, instance_group_id):
-        instance_groups = self.get_instance_groups(
-            instance_group_ids=[instance_group_id]
-        )
-        if len(instance_groups) == 0:
-            return None
-        instance_group = instance_groups[0]
-        instance_group.auto_scaling_policy = None
+    def remove_auto_scaling_policy(self, instance_group_id):
+        self.put_auto_scaling_policy(instance_group_id, auto_scaling_policy=None)
 
     def create_security_configuration(self, name, security_configuration):
         if name in self.security_configurations:
             raise InvalidRequestException(
-                message="SecurityConfiguration with name '{}' already exists.".format(
-                    name
-                )
+                message=f"SecurityConfiguration with name '{name}' already exists."
             )
         security_configuration = FakeSecurityConfiguration(
             name=name, security_configuration=security_configuration
@@ -683,26 +683,16 @@ class ElasticMapReduceBackend(BaseBackend):
     def get_security_configuration(self, name):
         if name not in self.security_configurations:
             raise InvalidRequestException(
-                message="Security configuration with name '{}' does not exist.".format(
-                    name
-                )
+                message=f"Security configuration with name '{name}' does not exist."
             )
         return self.security_configurations[name]
 
     def delete_security_configuration(self, name):
         if name not in self.security_configurations:
             raise InvalidRequestException(
-                message="Security configuration with name '{}' does not exist.".format(
-                    name
-                )
+                message=f"Security configuration with name '{name}' does not exist."
             )
         del self.security_configurations[name]
 
 
-emr_backends = {}
-for region in Session().get_available_regions("emr"):
-    emr_backends[region] = ElasticMapReduceBackend(region)
-for region in Session().get_available_regions("emr", partition_name="aws-us-gov"):
-    emr_backends[region] = ElasticMapReduceBackend(region)
-for region in Session().get_available_regions("emr", partition_name="aws-cn"):
-    emr_backends[region] = ElasticMapReduceBackend(region)
+emr_backends = BackendDict(ElasticMapReduceBackend, "emr")

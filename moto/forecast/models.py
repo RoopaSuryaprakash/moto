@@ -1,10 +1,7 @@
 import re
 from datetime import datetime
 
-from boto3 import Session
-from six import iteritems
-
-from moto.core import ACCOUNT_ID, BaseBackend
+from moto.core import BaseBackend, BackendDict
 from moto.core.utils import iso_8601_datetime_without_milliseconds
 from .exceptions import (
     InvalidInputException,
@@ -28,19 +25,18 @@ class DatasetGroup:
     ]
 
     def __init__(
-        self, region_name, dataset_arns, dataset_group_name, domain, tags=None
+        self,
+        account_id,
+        region_name,
+        dataset_arns,
+        dataset_group_name,
+        domain,
+        tags=None,
     ):
         self.creation_date = iso_8601_datetime_without_milliseconds(datetime.now())
         self.modified_date = self.creation_date
 
-        self.arn = (
-            "arn:aws:forecast:"
-            + region_name
-            + ":"
-            + str(ACCOUNT_ID)
-            + ":dataset-group/"
-            + dataset_group_name
-        )
+        self.arn = f"arn:aws:forecast:{region_name}:{account_id}:dataset-group/{dataset_group_name}"
         self.dataset_arns = dataset_arns if dataset_arns else []
         self.dataset_group_name = dataset_group_name
         self.domain = domain
@@ -102,14 +98,14 @@ class DatasetGroup:
 
 
 class ForecastBackend(BaseBackend):
-    def __init__(self, region_name):
-        super(ForecastBackend, self).__init__()
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
         self.dataset_groups = {}
         self.datasets = {}
-        self.region_name = region_name
 
     def create_dataset_group(self, dataset_group_name, domain, dataset_arns, tags):
         dataset_group = DatasetGroup(
+            account_id=self.account_id,
             region_name=self.region_name,
             dataset_group_name=dataset_group_name,
             domain=domain,
@@ -160,14 +156,7 @@ class ForecastBackend(BaseBackend):
         dsg.update(dataset_arns)
 
     def list_dataset_groups(self):
-        return [v for (_, v) in iteritems(self.dataset_groups)]
-
-    def reset(self):
-        region_name = self.region_name
-        self.__dict__ = {}
-        self.__init__(region_name)
+        return [v for (_, v) in self.dataset_groups.items()]
 
 
-forecast_backends = {}
-for region in Session().get_available_regions("forecast"):
-    forecast_backends[region] = ForecastBackend(region)
+forecast_backends = BackendDict(ForecastBackend, "forecast")

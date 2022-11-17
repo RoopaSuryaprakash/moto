@@ -1,7 +1,5 @@
-from __future__ import unicode_literals
-
-from moto.compat import OrderedDict
-from .base import BaseRDSBackend, BaseRDSModel
+from collections import OrderedDict
+from .base import BaseRDSModel
 from .tag import TaggableRDSResource
 from .. import utils
 from ..exceptions import (
@@ -70,7 +68,7 @@ class OptionGroup(TaggableRDSResource, BaseRDSModel):
         major_engine_version,
         tags=None,
     ):
-        super(OptionGroup, self).__init__(backend)
+        super().__init__(backend)
         self.engine_name = engine_name
         self.major_engine_version = major_engine_version
         self.option_group_description = option_group_description
@@ -93,20 +91,19 @@ class OptionGroup(TaggableRDSResource, BaseRDSModel):
     def option_group_arn(self):
         return self.arn
 
-    def remove_options(self, options_to_remove):
+    def remove_options(self, _):
         # TODO: Check for option in self.options and remove if exists.
         # Raise error otherwise
         return self
 
-    def add_options(self, options_to_add):
+    def add_options(self, _):
         # TODO: Validate option and add it to self.options.
         # If invalid raise error
         return self
 
 
-class OptionGroupBackend(BaseRDSBackend):
+class OptionGroupBackend:
     def __init__(self):
-        super(OptionGroupBackend, self).__init__()
         self.option_groups = OrderedDict()
         self.option_group_options = OrderedDict()
         for og in utils.default_option_groups:
@@ -154,7 +151,7 @@ class OptionGroupBackend(BaseRDSBackend):
         option_group_description="",
         engine_name=None,
         major_engine_version=None,
-        **kwargs
+        **kwargs,
     ):
         valid_option_group_engines = {
             "mysql": ["5.6"],
@@ -185,7 +182,7 @@ class OptionGroupBackend(BaseRDSBackend):
             option_group_description=option_group_description,
             engine_name=engine_name,
             major_engine_version=major_engine_version,
-            **kwargs
+            **kwargs,
         )
         self.option_groups[option_group_name] = option_group
         return option_group
@@ -199,12 +196,12 @@ class OptionGroupBackend(BaseRDSBackend):
         option_group_name=None,
         engine_name=None,
         major_engine_version=None,
-        **kwargs
+        **_,
     ):
         if option_group_name:
             return [self.get_option_group(option_group_name)]
         option_group_list = []
-        for name, group in self.option_groups.items():
+        for _, group in self.option_groups.items():
             if engine_name and group.engine_name != engine_name:
                 continue
             elif (
@@ -217,7 +214,7 @@ class OptionGroupBackend(BaseRDSBackend):
         return option_group_list
 
     def describe_option_group_options(
-        self, engine_name, major_engine_version=None, **kwargs
+        self, engine_name, major_engine_version=None, **_
     ):
         option_group_options = [ogo for ogo in self.option_group_options.values()]
         if engine_name not in utils.VALID_DB_ENGINES:
@@ -245,7 +242,7 @@ class OptionGroupBackend(BaseRDSBackend):
         option_group_name,
         options_to_include=None,
         options_to_remove=None,
-        apply_immediately=None,
+        **_,
     ):
         option_group = self.get_option_group(option_group_name)
         if not options_to_include and not options_to_remove:

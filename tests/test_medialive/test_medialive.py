@@ -1,11 +1,9 @@
-from __future__ import unicode_literals
-
 import boto3
-import sure  # noqa
+import sure  # noqa # pylint: disable=unused-import
 from moto import mock_medialive
 from uuid import uuid4
 
-from moto.core import ACCOUNT_ID
+from moto.core import DEFAULT_ACCOUNT_ID as ACCOUNT_ID
 
 region = "eu-west-1"
 
@@ -65,7 +63,7 @@ def _create_channel_config(name, **kwargs):
                 "InputSettings": {
                     "DenoiseFilter": "DISABLED",
                     "AudioSelectors": [
-                        {"Name": "EnglishLanguage", "SelectorSettings": {},}
+                        {"Name": "EnglishLanguage", "SelectorSettings": {}}
                     ],
                     "InputFilter": "AUTO",
                     "DeblockFilter": "DISABLED",
@@ -87,7 +85,7 @@ def _create_channel_config(name, **kwargs):
             "VideoDescriptions": [],
             "AudioDescriptions": [],
             "OutputGroups": [],
-            "TimecodeConfig": {"Source": "a-source",},
+            "TimecodeConfig": {"Source": "a-source"},
         },
     )
     input_specification = kwargs.get("input_specification", {})
@@ -215,7 +213,7 @@ def test_stop_channel_succeeds():
     create_response = client.create_channel(**channel_config)
     channel_id = create_response["Channel"]["Id"]
     assert len(channel_id) > 1
-    start_response = client.start_channel(ChannelId=channel_id)
+    client.start_channel(ChannelId=channel_id)
     stop_response = client.stop_channel(ChannelId=channel_id)
     stop_response["Name"].should.equal(channel_name)
     stop_response["State"].should.equal("STOPPING")
@@ -237,12 +235,12 @@ def test_update_channel_succeeds():
     assert len(channel_id) > 1
 
     update_response = client.update_channel(
-        ChannelId=channel_id, Name="Updated Channel",
+        ChannelId=channel_id, Name="Updated Channel"
     )
     update_response["Channel"]["State"].should.equal("UPDATING")
     update_response["Channel"]["Name"].should.equal("Updated Channel")
 
-    describe_response = client.describe_channel(ChannelId=channel_id,)
+    describe_response = client.describe_channel(ChannelId=channel_id)
     describe_response["State"].should.equal("IDLE")
     describe_response["Name"].should.equal("Updated Channel")
 
@@ -297,9 +295,9 @@ def test_describe_input_succeeds():
 def test_list_inputs_succeeds():
     client = boto3.client("medialive", region_name=region)
     input_config1 = _create_input_config("Input One")
-    create_response = client.create_input(**input_config1)
+    client.create_input(**input_config1)
     input_config2 = _create_input_config("Input Two")
-    create_response = client.create_input(**input_config2)
+    client.create_input(**input_config2)
 
     response = client.list_inputs()
     len(response["Inputs"]).should.equal(2)
@@ -331,6 +329,6 @@ def test_update_input_succeeds():
 
     create_response = client.create_input(**input_config)
     update_response = client.update_input(
-        InputId=create_response["Input"]["Id"], Name="test input U",
+        InputId=create_response["Input"]["Id"], Name="test input U"
     )
     update_response["Input"]["Name"].should.equal("test input U")

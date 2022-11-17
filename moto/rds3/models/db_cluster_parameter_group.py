@@ -1,8 +1,6 @@
-from __future__ import unicode_literals
-
-from .base import BaseRDSBackend, BaseRDSModel
+from .base import BaseRDSModel
 from .tag import TaggableRDSResource
-from moto.compat import OrderedDict
+from collections import OrderedDict
 from collections import defaultdict
 from ..exceptions import (
     DBClusterParameterGroupNotFound,
@@ -26,7 +24,7 @@ class DBClusterParameterGroup(TaggableRDSResource, BaseRDSModel):
         db_parameter_group_family,
         tags=None,
     ):
-        super(DBClusterParameterGroup, self).__init__(backend)
+        super().__init__(backend)
         self.db_cluster_parameter_group_name = db_cluster_parameter_group_name
         self.description = description
         self.db_parameter_group_family = db_parameter_group_family
@@ -56,9 +54,8 @@ class DBClusterParameterGroup(TaggableRDSResource, BaseRDSModel):
         self.backend.delete_db_cluster_parameter_group(self.identifier)
 
 
-class DBClusterParameterGroupBackend(BaseRDSBackend):
+class DBClusterParameterGroupBackend:
     def __init__(self):
-        super(DBClusterParameterGroupBackend, self).__init__()
         self.db_cluster_parameter_groups = OrderedDict()
         for item in utils.default_db_cluster_parameter_groups:
             group = DBClusterParameterGroup(
@@ -110,7 +107,7 @@ class DBClusterParameterGroupBackend(BaseRDSBackend):
         return self.db_cluster_parameter_groups.pop(param_group.resource_id)
 
     def describe_db_cluster_parameter_groups(
-        self, db_cluster_parameter_group_name=None, **kwargs
+        self, db_cluster_parameter_group_name=None, **_
     ):
         if db_cluster_parameter_group_name:
             return [

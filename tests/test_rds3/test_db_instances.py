@@ -1,10 +1,9 @@
-from __future__ import unicode_literals
-
 import datetime
 import time
 import uuid
 
 import boto3
+import pytest
 import pytz
 from botocore.exceptions import ClientError
 from sure import this
@@ -141,6 +140,16 @@ def test_restore_db_instance_to_point_in_time():
         details_source["CopyTagsToSnapshot"]
     )
     details_target["DBInstanceClass"].should.equal(details_source["DBInstanceClass"])
+
+
+@pytest.mark.xfail
+@mock_rds
+def test_modify_with_no_modifications_raises_error():
+    client = boto3.client("rds", region_name="us-west-2")
+    identifier, _ = create_db_instance(client, MaxAllocatedStorage=25)
+    client.modify_db_instance.when.called_with(
+        DBInstanceIdentifier=identifier, MaxAllocatedStorage=25
+    ).should.throw(ClientError, "No modifications were requested")
 
 
 # @mock_rds

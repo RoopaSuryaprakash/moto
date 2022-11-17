@@ -37,7 +37,9 @@ def main():
     for region in regions:
         for location_type in TYPES:
             ec2 = boto3.client("ec2", region_name=region)
-            dest = os.path.join(root_dir, "{0}/{1}/{2}.json".format(PATH, location_type, region))
+            dest = os.path.join(
+                root_dir, "{0}/{1}/{2}.json".format(PATH, location_type, region)
+            )
             try:
                 instances = []
                 offerings = ec2.describe_instance_type_offerings(
@@ -47,14 +49,31 @@ def main():
                 next_token = offerings.get("NextToken", "")
                 while next_token:
                     offerings = ec2.describe_instance_type_offerings(
-                        LocationType=location_type,
-                        NextToken=next_token
+                        LocationType=location_type, NextToken=next_token
                     )
                     instances.extend(offerings["InstanceTypeOfferings"])
                     next_token = offerings.get("NextToken", None)
+                for i in instances:
+                    del i["LocationType"]  # This can be reproduced, no need to persist it
+                instances = sorted(instances, key=lambda i: (i['Location'], i["InstanceType"]))
+
+                # Ensure we use the correct US-west availability zones
+                # There are only two - for some accounts they are called us-west-1b and us-west-1c
+                # As our EC2-module assumes us-west-1a and us-west-1b, we may have to rename the zones coming from AWS
+                # https://github.com/spulec/moto/issues/5494
+                if region == "us-west-1" and location_type == "availability-zone":
+                    zones = set([i["Location"] for i in instances])
+                    if zones == {"us-west-1b", "us-west-1c"}:
+                        for i in instances:
+                            if i["Location"] == "us-west-1b":
+                                i["Location"] = "us-west-1a"
+                        for i in instances:
+                            if i["Location"] == "us-west-1c":
+                                i["Location"] = "us-west-1b"
+
                 print("Writing data to {0}".format(dest))
                 with open(dest, "w+") as open_file:
-                    json.dump(instances, open_file, sort_keys=True)
+                    json.dump(instances, open_file, indent=1)
             except Exception as e:
                 print("Unable to write data to {0}".format(dest))
                 print(e)

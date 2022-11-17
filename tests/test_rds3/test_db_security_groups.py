@@ -1,8 +1,7 @@
-from __future__ import unicode_literals
-
+# pylint: disable=unused-import
 from botocore.exceptions import ClientError
 import boto3
-import sure
+import sure  # noqa: F401
 from . import mock_rds
 
 
@@ -135,8 +134,14 @@ def test_add_security_group_to_database():
 @mock_rds
 def test_list_tags_security_group():
     test_tags = [
-        {"Key": "foo", "Value": "bar",},
-        {"Key": "foo1", "Value": "bar1",},
+        {
+            "Key": "foo",
+            "Value": "bar",
+        },
+        {
+            "Key": "foo1",
+            "Value": "bar1",
+        },
     ]
     conn = boto3.client("rds", region_name="us-west-2")
     security_group = conn.create_db_security_group(
@@ -184,7 +189,7 @@ def test_remove_tags_security_group():
         Tags=[{"Value": "bar", "Key": "foo"}, {"Value": "bar1", "Key": "foo1"}],
     )["DBSecurityGroup"]["DBSecurityGroupName"]
 
-    resource = "arn:aws:rds:us-west-2:1234567890:secgrp:{0}".format(security_group)
+    resource = "arn:aws:rds:us-west-2:123456789012:secgrp:{0}".format(security_group)
     conn.remove_tags_from_resource(ResourceName=resource, TagKeys=["foo"])
 
     result = conn.list_tags_for_resource(ResourceName=resource)

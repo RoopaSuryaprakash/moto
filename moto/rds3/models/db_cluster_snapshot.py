@@ -1,9 +1,7 @@
-from __future__ import unicode_literals
-
 import copy
 
-from moto.compat import OrderedDict
-from .base import BaseRDSBackend, BaseRDSModel
+from collections import OrderedDict
+from .base import BaseRDSModel
 from .tag import TaggableRDSResource
 from ..exceptions import (
     DBClusterSnapshotAlreadyExists,
@@ -18,7 +16,7 @@ class DBClusterSnapshot(TaggableRDSResource, BaseRDSModel):
     def __init__(
         self, backend, identifier, db_cluster, snapshot_type="manual", tags=None
     ):
-        super(DBClusterSnapshot, self).__init__(backend)
+        super().__init__(backend)
         self.db_cluster_snapshot_identifier = identifier
         self.snapshot_type = snapshot_type
         self.percent_progress = 100
@@ -49,9 +47,8 @@ class DBClusterSnapshot(TaggableRDSResource, BaseRDSModel):
         return self.created
 
 
-class DBClusterSnapshotBackend(BaseRDSBackend):
+class DBClusterSnapshotBackend:
     def __init__(self):
-        super(DBClusterSnapshotBackend, self).__init__()
         self.db_cluster_snapshots = OrderedDict()
 
     def get_db_cluster_snapshot(self, db_cluster_snapshot_identifier):
@@ -84,7 +81,7 @@ class DBClusterSnapshotBackend(BaseRDSBackend):
         db_cluster_identifier=None,
         db_cluster_snapshot_identifier=None,
         snapshot_type=None,
-        **kwargs
+        **_
     ):
         if db_cluster_snapshot_identifier:
             return [self.get_db_cluster_snapshot(db_cluster_snapshot_identifier)]

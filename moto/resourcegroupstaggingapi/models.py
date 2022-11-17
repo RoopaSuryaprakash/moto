@@ -1,11 +1,6 @@
-from __future__ import unicode_literals
-import uuid
-import six
-from boto3 import Session
-
-from moto.core import ACCOUNT_ID
-from moto.core import BaseBackend
+from moto.core import BaseBackend, BackendDict
 from moto.core.exceptions import RESTError
+from moto.moto_api._internal import mock_random
 
 from moto.s3 import s3_backends
 from moto.ec2 import ec2_backends
@@ -13,10 +8,11 @@ from moto.elb import elb_backends
 from moto.elbv2 import elbv2_backends
 from moto.kinesis import kinesis_backends
 from moto.kms import kms_backends
-from moto.rds2 import rds2_backends
+from moto.rds import rds_backends
 from moto.glacier import glacier_backends
 from moto.redshift import redshift_backends
 from moto.emr import emr_backends
+from moto.awslambda import lambda_backends
 
 # Left: EC2 ElastiCache RDS ELB CloudFront WorkSpaces Lambda EMR Glacier Kinesis Redshift Route53
 # StorageGateway DynamoDB MachineLearning ACM DirectConnect DirectoryService CloudHSM
@@ -24,9 +20,8 @@ from moto.emr import emr_backends
 
 
 class ResourceGroupsTaggingAPIBackend(BaseBackend):
-    def __init__(self, region_name=None):
-        super(ResourceGroupsTaggingAPIBackend, self).__init__()
-        self.region_name = region_name
+    def __init__(self, region_name, account_id):
+        super().__init__(region_name, account_id)
 
         self._pages = {}
         # Like 'someuuid': {'gen': <generator>, 'misc': None}
@@ -34,80 +29,82 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
         # fit in the current request. As we only store generators
         # theres not really any point to clean up
 
-    def reset(self):
-        region_name = self.region_name
-        self.__dict__ = {}
-        self.__init__(region_name)
-
     @property
     def s3_backend(self):
         """
         :rtype: moto.s3.models.S3Backend
         """
-        return s3_backends["global"]
+        return s3_backends[self.account_id]["global"]
 
     @property
     def ec2_backend(self):
         """
         :rtype: moto.ec2.models.EC2Backend
         """
-        return ec2_backends[self.region_name]
+        return ec2_backends[self.account_id][self.region_name]
 
     @property
     def elb_backend(self):
         """
         :rtype: moto.elb.models.ELBBackend
         """
-        return elb_backends[self.region_name]
+        return elb_backends[self.account_id][self.region_name]
 
     @property
     def elbv2_backend(self):
         """
         :rtype: moto.elbv2.models.ELBv2Backend
         """
-        return elbv2_backends[self.region_name]
+        return elbv2_backends[self.account_id][self.region_name]
 
     @property
     def kinesis_backend(self):
         """
         :rtype: moto.kinesis.models.KinesisBackend
         """
-        return kinesis_backends[self.region_name]
+        return kinesis_backends[self.account_id][self.region_name]
 
     @property
     def kms_backend(self):
         """
         :rtype: moto.kms.models.KmsBackend
         """
-        return kms_backends[self.region_name]
+        return kms_backends[self.account_id][self.region_name]
 
     @property
     def rds_backend(self):
         """
-        :rtype: moto.rds2.models.RDS2Backend
+        :rtype: moto.rds.models.RDSBackend
         """
-        return rds2_backends[self.region_name]
+        return rds_backends[self.account_id][self.region_name]
 
     @property
     def glacier_backend(self):
         """
         :rtype: moto.glacier.models.GlacierBackend
         """
-        return glacier_backends[self.region_name]
+        return glacier_backends[self.account_id][self.region_name]
 
     @property
     def emr_backend(self):
         """
         :rtype: moto.emr.models.ElasticMapReduceBackend
         """
-        return emr_backends[self.region_name]
+        return emr_backends[self.account_id][self.region_name]
 
     @property
     def redshift_backend(self):
         """
         :rtype: moto.redshift.models.RedshiftBackend
         """
-        return redshift_backends[self.region_name]
+        return redshift_backends[self.account_id][self.region_name]
+
+    @property
+    def lambda_backend(self):
+        """
+        :rtype: moto.awslambda.models.LambdaBackend
+        """
+        return lambda_backends[self.account_id][self.region_name]
 
     def _get_resources_generator(self, tag_filters=None, resource_type_filters=None):
         # Look at
@@ -291,40 +288,30 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
 
         # TODO add these to the keys and values functions / combine functions
         # ELB, resource type elasticloadbalancing:loadbalancer
-        def get_elbv2_tags(arn):
-            result = []
-            for key, value in self.elbv2_backend.load_balancers[elb.arn].tags.items():
-                result.append({"Key": key, "Value": value})
-            return result
-
         if (
             not resource_type_filters
             or "elasticloadbalancing" in resource_type_filters
             or "elasticloadbalancing:loadbalancer" in resource_type_filters
         ):
             for elb in self.elbv2_backend.load_balancers.values():
-                tags = get_elbv2_tags(elb.arn)
+                tags = self.elbv2_backend.tagging_service.list_tags_for_resource(
+                    elb.arn
+                )["Tags"]
                 if not tag_filter(tags):  # Skip if no tags, or invalid filter
                     continue
 
                 yield {"ResourceARN": "{0}".format(elb.arn), "Tags": tags}
 
         # ELB Target Group, resource type elasticloadbalancing:targetgroup
-        def get_target_group_tags(arn):
-            result = []
-            for key, value in self.elbv2_backend.target_groups[
-                target_group.arn
-            ].tags.items():
-                result.append({"Key": key, "Value": value})
-            return result
-
         if (
             not resource_type_filters
             or "elasticloadbalancing" in resource_type_filters
             or "elasticloadbalancing:targetgroup" in resource_type_filters
         ):
             for target_group in self.elbv2_backend.target_groups.values():
-                tags = get_target_group_tags(target_group.arn)
+                tags = self.elbv2_backend.tagging_service.list_tags_for_resource(
+                    target_group.arn
+                )["Tags"]
                 if not tag_filter(tags):  # Skip if no tags, or invalid filter
                     continue
 
@@ -377,7 +364,22 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
             or "rds" in resource_type_filters
             or "rds:snapshot" in resource_type_filters
         ):
-            for snapshot in self.rds_backend.snapshots.values():
+            for snapshot in self.rds_backend.database_snapshots.values():
+                tags = snapshot.get_tags()
+                if not tags or not tag_filter(tags):
+                    continue
+                yield {
+                    "ResourceARN": snapshot.snapshot_arn,
+                    "Tags": tags,
+                }
+
+        # RDS Cluster Snapshot
+        if (
+            not resource_type_filters
+            or "rds" in resource_type_filters
+            or "rds:cluster-snapshot" in resource_type_filters
+        ):
+            for snapshot in self.rds_backend.cluster_snapshots.values():
                 tags = snapshot.get_tags()
                 if not tags or not tag_filter(tags):
                     continue
@@ -409,9 +411,7 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
                 ):  # Skip if no tags, or invalid filter
                     continue
                 yield {
-                    "ResourceARN": "arn:aws:ec2:{0}:{1}:vpc/{2}".format(
-                        self.region_name, ACCOUNT_ID, vpc.id
-                    ),
+                    "ResourceARN": f"arn:aws:ec2:{self.region_name}:{self.account_id}:vpc/{vpc.id}",
                     "Tags": tags,
                 }
         # VPC Customer Gateway
@@ -422,6 +422,23 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
         # VPC Subnet
         # VPC Virtual Private Gateway
         # VPC VPN Connection
+
+        # Lambda Instance
+        def transform_lambda_tags(dictTags):
+            result = []
+            for key, value in dictTags.items():
+                result.append({"Key": key, "Value": value})
+            return result
+
+        if not resource_type_filters or "lambda" in resource_type_filters:
+            for f in self.lambda_backend.list_functions():
+                tags = transform_lambda_tags(f.tags)
+                if not tags or not tag_filter(tags):
+                    continue
+                yield {
+                    "ResourceARN": f.function_arn,
+                    "Tags": tags,
+                }
 
     def _get_tag_keys_generator(self):
         # Look at
@@ -575,7 +592,7 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
         try:
             while True:
                 # Generator format: [{'ResourceARN': str, 'Tags': [{'Key': str, 'Value': str]}, ...]
-                next_item = six.next(generator)
+                next_item = next(generator)
                 resource_tags = len(next_item["Tags"])
 
                 if current_resources >= resources_per_page:
@@ -593,7 +610,7 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
             return None, result
 
         # Didn't hit StopIteration so there's stuff left in generator
-        new_token = str(uuid.uuid4())
+        new_token = str(mock_random.uuid4())
         self._pages[new_token] = {"gen": generator, "misc": next_item}
 
         # Token used up, might as well bin now, if you call it again your an idiot
@@ -625,7 +642,7 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
         try:
             while True:
                 # Generator format: ['tag', 'tag', 'tag', ...]
-                next_item = six.next(generator)
+                next_item = next(generator)
 
                 if current_tags + 1 >= 128:
                     break
@@ -639,7 +656,7 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
             return None, result
 
         # Didn't hit StopIteration so there's stuff left in generator
-        new_token = str(uuid.uuid4())
+        new_token = str(mock_random.uuid4())
         self._pages[new_token] = {"gen": generator, "misc": next_item}
 
         # Token used up, might as well bin now, if you call it again your an idiot
@@ -671,7 +688,7 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
         try:
             while True:
                 # Generator format: ['value', 'value', 'value', ...]
-                next_item = six.next(generator)
+                next_item = next(generator)
 
                 if current_tags + 1 >= 128:
                     break
@@ -685,7 +702,7 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
             return None, result
 
         # Didn't hit StopIteration so there's stuff left in generator
-        new_token = str(uuid.uuid4())
+        new_token = str(mock_random.uuid4())
         self._pages[new_token] = {"gen": generator, "misc": next_item}
 
         # Token used up, might as well bin now, if you call it again your an idiot
@@ -706,14 +723,6 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
     #     return failed_resources_map
 
 
-resourcegroupstaggingapi_backends = {}
-for region in Session().get_available_regions("resourcegroupstaggingapi"):
-    resourcegroupstaggingapi_backends[region] = ResourceGroupsTaggingAPIBackend(region)
-for region in Session().get_available_regions(
-    "resourcegroupstaggingapi", partition_name="aws-us-gov"
-):
-    resourcegroupstaggingapi_backends[region] = ResourceGroupsTaggingAPIBackend(region)
-for region in Session().get_available_regions(
-    "resourcegroupstaggingapi", partition_name="aws-cn"
-):
-    resourcegroupstaggingapi_backends[region] = ResourceGroupsTaggingAPIBackend(region)
+resourcegroupstaggingapi_backends = BackendDict(
+    ResourceGroupsTaggingAPIBackend, "resourcegroupstaggingapi"
+)
